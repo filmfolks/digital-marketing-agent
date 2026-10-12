@@ -13,8 +13,7 @@ google-genai>=0.1.0,<3; python_version >= '3.10'
 
 # Browser Automation & Chrome DevTools Fallback (Headless/Headed Human-Like Posting)
 playwright>=1.40.0,<2
-# NOTE: social_browser_agent.py imports the 1.x API (stealth_sync), which 2.x removed
-# (and 1.x needs setuptools/pkg_resources). On current installs stealth is therefore
-# silently OFF. Left as an owner decision -- see REVIEW (platform ToS).
-playwright-stealth>=1.0.6,<3
+# browser_core.load_stealth uses the 2.x API (Stealth().apply_stealth_sync) and
+# falls back to 1.x stealth_sync; 1.x also needs setuptools (pkg_resources).
+playwright-stealth>=2.0.0,<3
 pillow>=10.0.0,<13

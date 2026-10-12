@@ -62,10 +62,15 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from browser_core import (BrowserSession, LoggedOut, HumanCheckRequired, Pacer, profile_dir,  # noqa: E402
+                          setup_logging, PROFILES_DIR)
+import social_flows  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 AUDIT_LOG = ROOT / "logs" / "browser_audit.jsonl"
 SESSION_FILE = ROOT / "logs" / "social_session.json"
-PROFILE_DIR = ROOT / "logs" / "social_profile"
+PROFILE_DIR = PROFILES_DIR          # one sub-directory per platform (see browser_core.profile_dir)
 SHOTS_DIR = ROOT / "shots"
 SHOTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -191,51 +196,16 @@ def detect_engine() -> str:
     return "none"
 
 
-def get_playwright_page(headless: bool = True):
-    """Return a (playwright_obj, context, page) tuple with a persistent profile."""
-    from playwright.sync_api import sync_playwright
-    try:
-        from playwright_stealth import stealth_sync  # noqa: F401
-        USE_STEALTH = True
-    except ImportError:
-        USE_STEALTH = False
+def get_playwright_page(platform: str = "default", headless: bool = True):
+    """Return (playwright, context, page) on a persistent per-platform profile.
 
-    pw = sync_playwright().start()
-    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        ctx = pw.chromium.launch_persistent_context(
-            user_data_dir=str(PROFILE_DIR),
-            headless=headless,
-            viewport={"width": 1280, "height": 900},
-            # Realistic Chrome UA — not a generic bot UA
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            args=[
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--disable-blink-features=AutomationControlled",
-                "--lang=en-US",
-            ],
-            locale="en-US",
-            timezone_id="America/New_York",
-        )
-    except Exception:
-        browser = pw.chromium.launch(headless=headless)
-        ctx = browser.new_context(
-            viewport={"width": 1280, "height": 900},
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-        )
-    page = ctx.pages[0] if ctx.pages else ctx.new_page()
-    if USE_STEALTH:
-        stealth_sync(page)
-    return pw, ctx, page
+    Delegates to browser_core: installed Chrome/Edge channel, the browser's own
+    user agent, the OS timezone/locale, and stealth via playwright-stealth 2.x
+    → 1.x → logged warning. (The old version hard-coded a Chrome/124 macOS UA and
+    America/New_York, and silently dropped stealth on playwright-stealth 2.x.)
+    """
+    sess = BrowserSession(platform=platform, headless=headless).__enter__()
+    return sess.pw, sess.ctx, sess.page
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -277,7 +247,7 @@ def cmd_instagram_post(args):
         result_err("Playwright not installed.", "pip install playwright && playwright install chromium")
         return
 
-    pw, ctx, page = get_playwright_page(headless=getattr(args, "headed", False) is False)
+    pw, ctx, page = get_playwright_page(platform="instagram", headless=getattr(args, "headed", False) is False)
     shot = str(SHOTS_DIR / f"ig_post_{int(time.time())}.png")
     try:
         # Navigate to Instagram
@@ -375,7 +345,7 @@ def cmd_facebook_post(args):
         result_err("Playwright not installed.", "pip install playwright && playwright install chromium")
         return
 
-    pw, ctx, page = get_playwright_page(headless=getattr(args, "headed", False) is False)
+    pw, ctx, page = get_playwright_page(platform="facebook", headless=getattr(args, "headed", False) is False)
     shot = str(SHOTS_DIR / f"fb_post_{int(time.time())}.png")
     try:
         page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
@@ -482,7 +452,7 @@ def cmd_blogger_post(args):
         result_err("Playwright not installed.", "pip install playwright && playwright install chromium")
         return
 
-    pw, ctx, page = get_playwright_page(headless=getattr(args, "headed", False) is False)
+    pw, ctx, page = get_playwright_page(platform="blogger", headless=getattr(args, "headed", False) is False)
     shot = str(SHOTS_DIR / f"blogger_post_{int(time.time())}.png")
     try:
         # Navigate to Blogger new post
@@ -603,7 +573,7 @@ def cmd_canva_create(args):
         result_err("Playwright not installed.", "pip install playwright && playwright install chromium")
         return
 
-    pw, ctx, page = get_playwright_page(headless=getattr(args, "headed", False) is False)
+    pw, ctx, page = get_playwright_page(platform="canva", headless=getattr(args, "headed", False) is False)
     shot = str(SHOTS_DIR / f"canva_{int(time.time())}.png")
     try:
         page.goto("https://www.canva.com/create/", wait_until="domcontentloaded", timeout=30000)
@@ -716,7 +686,7 @@ def cmd_canva_to_instagram(args):
         return
 
     tmp_image = str(SHOTS_DIR / f"canva_ig_{int(time.time())}.png")
-    pw, ctx, page = get_playwright_page(headless=getattr(args, "headed", False) is False)
+    pw, ctx, page = get_playwright_page(platform="canva", headless=getattr(args, "headed", False) is False)
     try:
         # Step 1: Download from Canva
         page.goto(design_url, wait_until="domcontentloaded", timeout=30000)
@@ -835,7 +805,7 @@ def cmd_generic_post(args):
         result_err("Playwright not installed.", "pip install playwright && playwright install chromium")
         return
 
-    pw, ctx, page = get_playwright_page(headless=getattr(args, "headed", False) is False)
+    pw, ctx, page = get_playwright_page(platform="generic", headless=getattr(args, "headed", False) is False)
     shot = str(SHOTS_DIR / f"generic_post_{int(time.time())}.png")
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -876,6 +846,158 @@ def cmd_generic_post(args):
             pw.stop()
         except Exception:
             pass
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Fallback flows: login, check_logins, x_post, canva_export, canva_to_x
+# ──────────────────────────────────────────────────────────────────────────────
+def _run_flow(command: str, args, platform: str, fn, headed: bool | None = None):
+    """Open a per-platform session, run fn(session), print one JSON result.
+
+    Exit codes: 0 ok · 3 logged out · 4 flow failed · 5 engine missing.
+    Every failure leaves a screenshot path in the result."""
+    if detect_engine() != "playwright":
+        result_err("Playwright not installed.", "pip install -r requirements.txt && playwright install chromium")
+        return 5
+    headless = not (headed if headed is not None else getattr(args, "headed", False))
+    sess = None
+    try:
+        with BrowserSession(platform=platform, headless=headless) as sess:
+            try:
+                res = fn(sess)
+            except (LoggedOut, HumanCheckRequired) as e:
+                shot = sess.screenshot("logged_out")
+                audit(command, vars(args), "error", "logged out", platform=platform, screenshot=shot)
+                print(json.dumps({"ok": False, "error": str(e), "logged_out": True,
+                                  "platform": platform, "screenshot": shot}))
+                return 3
+            except Exception as e:                           # noqa: BLE001
+                shot = sess.screenshot("failed")
+                audit(command, vars(args), "error", str(e)[:300], platform=platform, screenshot=shot)
+                print(json.dumps({"ok": False, "error": str(e)[:400], "platform": platform,
+                                  "screenshot": shot}))
+                return 4
+    except Exception as e:                                   # browser failed to start
+        audit(command, vars(args), "error", f"launch: {e}"[:300], platform=platform)
+        result_err(f"browser launch failed: {str(e)[:300]}")
+        return 4
+    audit(command, vars(args), "ok", json.dumps(res, default=str)[:300], platform=platform,
+          dry_run=bool(res.get("dry_run")))
+    print(json.dumps(res, default=str))
+    return 0
+
+
+def cmd_login(args):
+    """Open a headed browser on the platform's persistent profile and wait for
+    a manual login. No password is ever typed, read or stored by Nexus."""
+    plat = args.platform
+    url = social_flows.LOGIN_URLS.get(plat)
+    if not url:
+        result_err(f"unknown platform {plat}; choose from {', '.join(social_flows.LOGIN_URLS)}")
+        return 1
+
+    def flow(sess):
+        sess.page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        print(f"[login] Log in to {plat} in the browser window. Waiting up to "
+              f"{args.wait}s — it closes by itself once you are logged in.", file=sys.stderr)
+        deadline = time.time() + args.wait
+        from browser_core import is_logged_in
+        while time.time() < deadline:
+            sess.page.wait_for_timeout(3000)
+            if is_logged_in(sess.page, plat):
+                # Revisit the home page once to make sure the session sticks.
+                sess.page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                sess.page.wait_for_timeout(4000)
+                if is_logged_in(sess.page, plat):
+                    return {"ok": True, "platform": plat, "logged_in": True,
+                            "profile": str(profile_dir(plat))}
+        raise LoggedOut(plat)
+    return _run_flow("login", args, plat, flow, headed=True)
+
+
+def cmd_check_logins(args):
+    plats = [p.strip() for p in args.platforms.split(",") if p.strip()]
+    results, code = [], 0
+    for plat in plats:
+        url = social_flows.LOGIN_URLS.get(plat)
+        if not url:
+            results.append({"platform": plat, "logged_in": False, "message": "unknown platform"})
+            code = 1
+            continue
+        if detect_engine() != "playwright":
+            result_err("Playwright not installed.")
+            return 5
+        try:
+            with BrowserSession(platform=plat, headless=not args.headed) as sess:
+                r = social_flows.check_login(sess.page, plat, url)
+                if not r["logged_in"]:
+                    r["screenshot"] = sess.screenshot("logged_out")
+                    code = 3
+                results.append(r)
+        except Exception as e:                               # noqa: BLE001
+            results.append({"platform": plat, "logged_in": False, "message": f"launch failed: {e}"[:300]})
+            code = 4
+    print(json.dumps({"ok": code == 0, "results": results}))
+    audit("check_logins", vars(args), "ok" if code == 0 else "error", json.dumps(results)[:300])
+    return code
+
+
+def _media_list(args) -> list:
+    return [m for m in (getattr(args, "media", None) or []) if m]
+
+
+def cmd_x_post(args):
+    if not args.dry_run:
+        require_actions(args)
+    if is_denied(args.text):
+        block_denied("x_post", args)
+    try:
+        social_flows.validate_x_text(args.text, args.long_post)
+    except social_flows.FlowError as e:
+        result_err(str(e))
+        return 4
+    return _run_flow("x_post", args, "x", lambda sess: social_flows.x_post(
+        sess.page, args.text, _media_list(args), long_post=args.long_post,
+        dry_run=args.dry_run, screenshot=sess.screenshot))
+
+
+def cmd_canva_export(args):
+    # Downloading your own design changes nothing on Canva, so it needs no
+    # --allow-actions and runs identically in dry-run.
+    return _run_flow("canva_export", args, "canva", lambda sess: social_flows.canva_export(
+        sess.page, args.design_url, args.out or None, file_type=args.file_type,
+        screenshot=sess.screenshot))
+
+
+def cmd_canva_to_x(args):
+    if not args.dry_run:
+        require_actions(args)
+    if is_denied(args.text):
+        block_denied("canva_to_x", args)
+    try:
+        social_flows.validate_x_text(args.text, args.long_post)
+    except social_flows.FlowError as e:
+        result_err(str(e))
+        return 4
+    holder: dict = {}
+
+    def export(sess):
+        r = social_flows.canva_export(sess.page, args.design_url, args.out or None,
+                                      file_type="PNG", screenshot=sess.screenshot)
+        holder["file"] = r["file"]
+        return r
+    import io
+    import contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = _run_flow("canva_export", args, "canva", export)
+    if code != 0:
+        print(buf.getvalue().strip())
+        return code
+    return _run_flow("canva_to_x", args, "x", lambda sess: {
+        **social_flows.x_post(sess.page, args.text, [holder["file"]], long_post=args.long_post,
+                              dry_run=args.dry_run, screenshot=sess.screenshot),
+        "canva_file": holder["file"]})
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -925,6 +1047,34 @@ def build_parser() -> argparse.ArgumentParser:
     gp.add_argument("--text", required=True, help="Text to type")
     gp.add_argument("--submit", default="button[type='submit']", help="CSS selector of submit button")
 
+    lg = sub.add_parser("login", help="Open a headed browser to log in once by hand (session persists)")
+    lg.add_argument("--platform", required=True, choices=sorted(social_flows.LOGIN_URLS))
+    lg.add_argument("--wait", type=int, default=300, help="seconds to wait for the manual login")
+
+    ck = sub.add_parser("check_logins", help="Verify the persistent profiles are logged in (no posting)")
+    ck.add_argument("--platforms", default="x,canva")
+
+    xp = sub.add_parser("x_post", help="Compose/publish a post on x.com")
+    xp.add_argument("--text", required=True)
+    xp.add_argument("--media", action="append", default=[], help="image/video path (repeatable, max 4)")
+    xp.add_argument("--long-post", action="store_true", dest="long_post",
+                    help="allow up to 25,000 chars (X Premium/Premium+ accounts)")
+    xp.add_argument("--dry-run", action="store_true", dest="dry_run",
+                    help="do everything except the final Post click")
+
+    ce = sub.add_parser("canva_export", help="Open a Canva design and download it")
+    ce.add_argument("--design-url", required=True, dest="design_url")
+    ce.add_argument("--out", default="")
+    ce.add_argument("--file-type", default="PNG", dest="file_type", choices=["PNG", "JPG", "PDF"])
+    ce.add_argument("--dry-run", action="store_true", dest="dry_run", help="accepted for symmetry; export is read-only")
+
+    cx = sub.add_parser("canva_to_x", help="Export a Canva design and attach it to an X post")
+    cx.add_argument("--design-url", required=True, dest="design_url")
+    cx.add_argument("--text", required=True)
+    cx.add_argument("--out", default="")
+    cx.add_argument("--long-post", action="store_true", dest="long_post")
+    cx.add_argument("--dry-run", action="store_true", dest="dry_run")
+
     return p
 
 
@@ -939,10 +1089,18 @@ def main():
         "canva_create": cmd_canva_create,
         "canva_to_instagram": cmd_canva_to_instagram,
         "generic_post": cmd_generic_post,
+        "login": cmd_login,
+        "check_logins": cmd_check_logins,
+        "x_post": cmd_x_post,
+        "canva_export": cmd_canva_export,
+        "canva_to_x": cmd_canva_to_x,
     }
+    setup_logging()
     fn = dispatch.get(args.command)
     if fn:
-        fn(args)
+        code = fn(args)
+        if isinstance(code, int) and code:
+            sys.exit(code)
     else:
         parser.print_help()
         sys.exit(1)
