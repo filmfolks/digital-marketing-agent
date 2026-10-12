@@ -386,6 +386,47 @@ curl -s -X POST -H 'Content-Type: application/json' -H 'X-Nexus-Token: mysecret'
 
 ---
 
+## 🔁 API first, browser fallback
+
+`agent/publish.py` (and so the relay's `/publish`, the UI, and the phone) always tries the official API first:
+
+1. **API**: network errors, 429, and 5xx are retried with exponential backoff and jitter (`NEXUS_API_RETRIES`, `NEXUS_BACKOFF_BASE`).
+2. **Browser fallback**: missing keys, 4xx auth errors, or retries running out hand the post to `agent/social_browser_agent.py`. It drives your own logged-in, persistent per-platform profile (`logs/profiles/<platform>`). It retries a bounded number of times (`NEXUS_BROWSER_RETRIES`), never when you are logged out.
+3. **Audit**: each line in `logs/publish_audit.jsonl` records `route` (`api`/`browser`) and every attempt.
+
+Browser flows: `x_post` (x.com composer, media, `--long-post` for Premium/Premium+), `canva_export` (Share ▸ Download), `canva_to_x`, `instagram_post`, `facebook_post`. Every flow supports `--dry-run`, which does everything except the final Post click.
+Platform behaviour:
+- Selectors are role/text based with fallbacks, so a small layout change doesn't break a flow.
+- Pacing is human-like.
+- Any failure leaves a screenshot in `shots/`.
+- A logged-out session or a bot-check page stops the run with the exact `login` command to run.
+
+Browser environment:
+- The installed Chrome or Edge is detected automatically (`NEXUS_BROWSER_CHANNEL` to override).
+- Its real user agent is used, and the OS timezone and locale.
+- Stealth uses playwright-stealth 2.x, falls back to 1.x, and logs a warning if neither is available.
+
+```bash
+python3 agent/social_browser_agent.py login --platform x        # once, by hand
+./scripts/e2e_check --canva-url https://www.canva.com/design/<id>/edit   # verifies, never posts
+python3 agent/publish.py --platform x --text "hi" --no-fallback          # API only
+python3 agent/publish.py --platform x --text "hi" --fallback-dry-run     # fallback stops before Post
+```
+
+## 📱 Phone as a client
+
+Browser automation runs on a desktop (macOS, Windows, Linux). On Android and iOS the **PWA is the client**: it sends jobs to the relay on your desktop (or a hosted relay), and the desktop runs the API call and, if needed, the browser fallback.
+
+```bash
+./start.sh --lan              # macOS/Linux  (Windows: start.bat -Lan  or  .\start.ps1 -Lan)
+```
+- LAN mode **refuses to start without a token of 24+ characters**. `start.sh --lan` generates one and saves it to `.env`.
+- The relay serves the PWA itself at `http(s)://<desktop-ip>:8712/app/`. Open that on the phone, paste the token in Settings → Local Relay, and *Add to Home Screen*.
+- For HTTPS, pass `--tls-cert/--tls-key` (or `NEXUS_TLS_CERT/NEXUS_TLS_KEY`, e.g. from mkcert), or put the relay behind an HTTPS reverse proxy. For a hosted UI on another origin, list it in `NEXUS_ALLOWED_ORIGINS`.
+- `capacitor.config.json` is included if you want to wrap `ui/` as a native shell (`npx cap add ios|android`).
+
+Full step-by-step manual test: **[TESTING.md](TESTING.md)**.
+
 ## 📤 Publish pipeline
 
 Publishing is a four-stage pipeline, deliberately not a single button.
