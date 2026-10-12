@@ -341,6 +341,18 @@ await test('short-form platforms keep the base budget', () => {
     assert.equal(tokenBudgetFor('twitter', 1400), 1400);
 });
 
+console.log('\nMarkup integrity');
+
+await test('every inline on*= handler in index.html is defined in script.js', async () => {
+    const fs = await import('node:fs');
+    const html = fs.readFileSync(path.join(uiDir, 'index.html'), 'utf8');
+    const js = fs.readFileSync(path.join(uiDir, 'script.js'), 'utf8');
+    const names = new Set([...html.matchAll(/\son[a-z]+="([A-Za-z_$][\w$]*)\s*\(/g)].map(m => m[1]));
+    const missing = [...names].filter(n =>
+        !new RegExp(`(^|\\n)\\s*(async\\s+)?function\\s+${n}\\b|(^|\\n)\\s*(const|let|var)\\s+${n}\\b`).test(js));
+    assert.deepEqual(missing, [], `undefined handlers: ${missing.join(', ')}`);
+});
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

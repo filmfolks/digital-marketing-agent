@@ -1192,6 +1192,15 @@ async function copyOutput() {
     showToast(ok ? 'Copied to clipboard!' : 'Copy failed — your browser blocked clipboard access', ok ? 'success' : 'error');
 }
 
+/** Copy the text of a <code>/<pre> block by id (used by inline onclick in index.html). */
+async function copyCode(id) {
+    const el = document.getElementById(id);
+    if (!el) { showToast('Nothing to copy', 'error'); return false; }
+    const ok = await copyToClipboard(el.innerText || el.textContent || '');
+    showToast(ok ? 'Copied to clipboard!' : 'Copy failed — select the text manually', ok ? 'success' : 'error');
+    return ok;
+}
+
 function clearOutput() {
     document.getElementById('outputEmpty').classList.remove('hidden');
     document.getElementById('outputTabs').classList.add('hidden');
