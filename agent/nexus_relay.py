@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import urllib.parse
 import os
 import re
 import secrets
@@ -131,6 +132,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # ── HTTP verbs ──────────────────────────────────────────────────────────
     def do_OPTIONS(self):
+        if not self._host_allowed():
+            return self._error(403, "Invalid Host header (DNS-rebinding protection)")
         if not self._origin_allowed():
             return self._error(403, "Origin not allowed by the Nexus relay")
         self.send_response(204)
@@ -161,16 +164,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(401, "Invalid or missing X-Nexus-Token")
             return self._reply(200, {"ok": True, "endpoints": list(CMD_MAP) + ["publish", "publish-due", "mcp", "queue", "health"]})
         if path.startswith("/shots/"):
-            filename = os.path.basename(path)
+            filename = os.path.basename(urllib.parse.unquote(path))
+            ext = os.path.splitext(filename)[1].lower()
+            ctype = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                     ".webp": "image/webp"}.get(ext)
             shot_file = ROOT / "shots" / filename
-            if shot_file.exists() and shot_file.is_file():
+            if ctype and not filename.startswith(".") and shot_file.exists() and shot_file.is_file():
                 try:
                     data = shot_file.read_bytes()
                     self.send_response(200)
-                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Type", ctype)
                     self.send_header("Content-Length", str(len(data)))
-                    origin = self.headers.get("Origin") or "*"
-                    self.send_header("Access-Control-Allow-Origin", origin)
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self._cors()   # same origin allow-list as every other route; never "*"
                     self.end_headers()
                     self.wfile.write(data)
                     return

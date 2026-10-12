@@ -139,6 +139,29 @@ class RelayServerCase(unittest.TestCase):
         self.assertEqual(status, 403)
 
     # ── input validation ────────────────────────────────────────────────────
+    def test_preflight_with_foreign_host_is_refused(self):
+        code, _ = self.request("OPTIONS", "/publish", origin="http://localhost:8000", host="evil.example")
+        self.assertEqual(code, 403)
+
+    def test_shots_never_send_wildcard_cors_and_reject_non_images(self):
+        shots = relay.ROOT / "shots"
+        shots.mkdir(exist_ok=True)
+        img = shots / "_test_cors_probe.png"
+        txt = shots / "_test_probe.txt"
+        img.write_bytes(b"\x89PNG\r\n\x1a\n")
+        txt.write_text("secret")
+        try:
+            req = urllib.request.Request(f"http://127.0.0.1:{self.port}/shots/_test_cors_probe.png")
+            with urllib.request.urlopen(req, timeout=10) as res:
+                self.assertEqual(res.status, 200)
+                self.assertEqual(res.headers.get("Content-Type"), "image/png")
+                self.assertIsNone(res.headers.get("Access-Control-Allow-Origin"))
+            code, _ = self.request("GET", "/shots/_test_probe.txt")
+            self.assertEqual(code, 404)
+        finally:
+            img.unlink(missing_ok=True)
+            txt.unlink(missing_ok=True)
+
     def test_unknown_route_is_404(self):
         status, _ = self.request("GET", "/nope", token=TOKEN)
         self.assertEqual(status, 404)
