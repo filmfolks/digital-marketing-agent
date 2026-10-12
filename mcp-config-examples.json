@@ -4,8 +4,13 @@
     "mcpServers": {
       "nexus-social-manager": {
         "command": "python3",
-        "args": ["ABSOLUTE_PATH/agent/nexus_mcp.py"],
-        "env": { "TELEGRAM_BOT_TOKEN": "", "TELEGRAM_CHAT_ID": "" }
+        "args": [
+          "ABSOLUTE_PATH/agent/nexus_mcp.py"
+        ],
+        "env": {
+          "TELEGRAM_BOT_TOKEN": "",
+          "TELEGRAM_CHAT_ID": ""
+        }
       }
     }
   },
@@ -33,15 +38,48 @@
   "lm_studio_hermes": {
     "_how": "LM Studio → Installed → MCP Servers → Add: command python3, args [ABSOLUTE_PATH/agent/nexus_mcp.py]. Hermes tool-calling will discover the 13 Nexus tools automatically.",
     "mcpServers": {
-      "nexus": { "command": "python3", "args": ["ABSOLUTE_PATH/agent/nexus_mcp.py"] }
+      "nexus": {
+        "command": "python3",
+        "args": [
+          "ABSOLUTE_PATH/agent/nexus_mcp.py"
+        ]
+      }
     }
   },
   "cursor_vs_code_copilot": {
     "mcpServers": {
-      "nexus": { "command": "python3", "args": ["${workspaceFolder}/agent/nexus_mcp.py"] }
+      "nexus": {
+        "command": "python3",
+        "args": [
+          "${workspaceFolder}/agent/nexus_mcp.py"
+        ]
+      }
     }
   },
   "xai_grok_agentic": {
     "_note": "Grok does not yet accept stdio MCP servers directly; expose nexus_mcp over an SSE gateway (e.g. supergateway: npx -y supergateway --stdio \"python3 agent/nexus_mcp.py\" --port 8957) and register the URL in clients that support remote MCP."
+  },
+  "hermes_agent_nexus_tasks": {
+    "_how": "~/.hermes/config.yaml → mcp_servers (YAML). Safe server: only creates pending_approval tasks. Copy skills/nexus to ~/.hermes/skills/marketing/nexus.",
+    "mcp_servers": {
+      "nexus": {
+        "command": "ABSOLUTE_PATH/.venv/bin/python3",
+        "args": [
+          "ABSOLUTE_PATH/agent/nexus_tasks_mcp.py"
+        ],
+        "timeout": 60
+      }
+    }
+  },
+  "lm_studio_nexus_tasks": {
+    "_how": "~/.lmstudio/mcp.json (Windows %USERPROFILE%\\.lmstudio\\mcp.json). Safe task-only tools for unattended local models.",
+    "mcpServers": {
+      "nexus-tasks": {
+        "command": "python3",
+        "args": [
+          "ABSOLUTE_PATH/agent/nexus_tasks_mcp.py"
+        ]
+      }
+    }
   }
 }

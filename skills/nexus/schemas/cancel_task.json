@@ -1,0 +1,24 @@
+{
+  "type": "function",
+  "function": {
+    "name": "cancel_task",
+    "description": "Cancel a task that has not run yet.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "minLength": 3
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 300
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

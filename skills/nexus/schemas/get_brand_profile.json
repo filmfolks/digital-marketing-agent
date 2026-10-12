@@ -1,0 +1,16 @@
+{
+  "type": "function",
+  "function": {
+    "name": "get_brand_profile",
+    "description": "Get the brand profile (voice, audience, pillars, hashtags, guardrails) of the active or named brand.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "brand": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

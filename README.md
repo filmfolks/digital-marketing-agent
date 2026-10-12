@@ -10,6 +10,25 @@ An enterprise-grade, local-first **Autonomous Digital Marketing & Social Media A
 
 ---
 
+## 🆕 Nexus Chat, tasks, calendar and campaigns
+- **Nexus Chat** lets you tell any brain what to plan (LM Studio/Ollama Hermes, cloud APIs,
+  Antigravity, Sho). It creates **tasks that wait for your approval**.
+- The **Task Calendar** has month and week views, drag to reschedule, approve and .ics export.
+  The **Tasks** page lists everything.
+- The **scheduler** inside the relay posts *approved* tasks at their time through the existing
+  posting flows. It survives restarts, never double-posts, and doesn't post missed tasks late
+  once the grace window has passed.
+- **Campaign planning:** "plan the campaign for this whole month" produces dated posts with
+  captions, SEO hashtags and poster ideas, all pending approval.
+- **Local-model ready:** one brain router speaks Hermes `<tool_call>` and OpenAI tools, with a
+  tolerant parser, schema validation and a repair/retry loop.
+- **Skill set** for Hermes Agent and other harnesses in `skills/nexus/`, plus a safe MCP server
+  (`agent/nexus_tasks_mcp.py`).
+- Docs:
+  - [docs/tutorials/CHAT_TASKS_CALENDAR.md](docs/tutorials/CHAT_TASKS_CALENDAR.md)
+  - [docs/tutorials/HERMES.md](docs/tutorials/HERMES.md)
+  - [research notes](docs/research/HERMES_INTEGRATION.md)
+
 ## 🆕 New in this release: brains, posting flows, activity, Windows
 
 Step-by-step guides are in **[docs/tutorials/](docs/tutorials/README.md)**.

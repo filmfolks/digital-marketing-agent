@@ -11,16 +11,35 @@ Pick the brain in **Settings → AI engine** or the top-bar engine menu. Every b
 | **Sho · Grok Bot, external agent** (`sho`) | Nexus calls no LLM. Each request becomes a job in `data/brain/inbox/<id>.json`. An external agent (Sho / Grok Bot, or any agent you run) answers by writing `data/brain/outbox/<id>.json` or calling `POST /brain/result`. `agent/brain_bridge.py list/show/answer/approve/reject`. | relay with `NEXUS_RELAY_TOKEN` set (required for `/brain/result` and `/brain/approve`) | works. This is the job-queue mechanism, and an agent with access to the folder or relay can pick jobs up. |
 | Built-in (`builtin`) | Offline templates | nothing | works |
 
-## About "Hermes"
-Neither this repo nor the client builds contain a separate Hermes *agent* integration. Hermes is used as a **model**:
-- Hermes 3 through LM Studio or Ollama (engine `local`; `skill/digital-marketer/scripts/lm_studio_run.sh`). The generator adds a Hermes-specific system intro when the model name contains "hermes".
-- Hermes 4 405B through OpenRouter (engine `cloud`, provider `openrouter`).
-- LM Studio can also load the Nexus MCP server, so Hermes tool-calling sees the Nexus tools (`mcp-config-examples.json` → `lm_studio_hermes`).
+## One router for every brain (Nexus Chat, tasks, campaigns)
+`agent/brain_router.py` gives every brain the same call: `chat(messages, tools=…, schema=…)`.
+That is what **Nexus Chat** uses.
 
-To run your own Hermes agent as the brain, use the **Sho** job queue: that agent polls `GET /brain/jobs?status=pending` and posts its answer to `/brain/result`.
+| Brain | How tools are called |
+|---|---|
+| LM Studio, Ollama | Native OpenAI `tools`. If the model answers in text, Nexus parses `<tool_call>` itself. If Ollama replies "does not support tools", Nexus switches to the Hermes prompt automatically. |
+| Cloud (OpenAI, Groq, DeepSeek, xAI, OpenRouter, Gemini, Qwen) | Native `tools` |
+| Claude | Anthropic `tool_use` |
+| Antigravity | Hermes `<tools>`/`<tool_call>` prompt through the live bridge |
+| Sho | Hermes prompt in a `chat` job. The answer can be text with `<tool_call>` tags or `{"tool_calls": [...], "text": "..."}` |
+
+Every reply goes through the same tolerant parser, schema validation and repair loop (up to
+2 retries with the exact errors). You can force a mode with `brain.mode`: `native`, `hermes`
+(prompt + tags) or `json` (`response_format: json_schema`).
+See [CHAT_TASKS_CALENDAR.md](CHAT_TASKS_CALENDAR.md) and [HERMES.md](HERMES.md).
+
+## About "Hermes"
+- **Hermes 3** (LM Studio/Ollama) and **Hermes 4** (OpenRouter) are used as models. The router
+  speaks their native function-calling format. Research notes:
+  [docs/research/HERMES_INTEGRATION.md](../research/HERMES_INTEGRATION.md).
+- **Hermes Agent** (Nous Research's harness) can drive Nexus. Load `skills/nexus/` as a skill and
+  add `agent/nexus_tasks_mcp.py` as an MCP server. It can only create pending_approval tasks.
+  See [HERMES.md](HERMES.md).
+- The older `agent/nexus_mcp.py` still exposes direct publishing tools. Give unattended models
+  `nexus_tasks_mcp.py` instead.
 
 ## Approval rule (all brains)
-No brain publishes by itself. A brain's `post` job is created as `pending_approval`, and only the owner moves it forward: `brain_bridge.py approve <id> [--publish] [--dry-run]` or `POST /brain/approve`. In the UI, publishing is always a click by the user. Browser flows have `--dry-run`, which stops before the final Post/Share click.
+No brain publishes by itself. Tasks from Nexus Chat start as `pending_approval`, and only approved tasks are posted by the scheduler at their time. A brain's `post` job is created as `pending_approval`, and only the owner moves it forward: `brain_bridge.py approve <id> [--publish] [--dry-run]` or `POST /brain/approve`. In the UI, publishing is always a click by the user. Browser flows have `--dry-run`, which stops before the final Post/Share click.
 
 ## Antigravity on Windows (UNTESTED)
 `antigravity_bridge.py` looks for the app's `language_server` under `%LOCALAPPDATA%\Programs\Antigravity\resources\bin\` and `%ProgramFiles%\Antigravity\…`, or for the wrapper `~/.gemini/antigravity/bin/agentapi(.exe/.cmd)`. It finds the running server with `psutil` (if installed) or PowerShell `Get-CimInstance Win32_Process`, falling back to `wmic`, and finds its ports with `netstat -ano`. If the binary lives somewhere else, set `NEXUS_ANTIGRAVITY_LS=C:\path\to\language_server.exe`. These parsers have unit tests, but nobody has run them against a real Windows Antigravity install yet.

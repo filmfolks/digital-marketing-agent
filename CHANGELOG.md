@@ -5,6 +5,28 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — chat, tasks, calendar, campaigns
+
+### Added
+- `agent/brain_router.py`: one `chat(messages, tools|schema)` interface for every brain.
+  - Modes: native OpenAI tools, Hermes `<tool_call>` prompt, or JSON schema.
+  - Includes a tolerant parser, validation and a repair/retry loop.
+- `agent/nexus_actions.py`: the action schema (10 tools) plus a zero-dependency validator and
+  executor. There is no publish or approve tool.
+- `agent/nexus_tasks.py`: thread- and process-safe task store with a status machine, campaigns,
+  calendar and ICS export.
+- `agent/nexus_scheduler.py`: runs approved tasks in the relay.
+  - Uses a grace window and compare-and-set claims.
+  - Recovers tasks that were interrupted mid-post.
+- `agent/nexus_chat.py` (agent loop) and `agent/nexus_task_routes.py`.
+  - New relay endpoints: `/nexus/chat` (SSE), `/tasks…`, `/calendar`, `/calendar.ics`,
+    `/scheduler`.
+- UI: Nexus Chat, Task Calendar and Tasks pages (`ui/nexus-tasks.js`).
+- `skills/nexus/` skill set (SKILL.md, system prompt, tool cards, schemas, few-shot examples)
+  and `agent/nexus_tasks_mcp.py` (stdio MCP).
+- Docs: `docs/research/HERMES_INTEGRATION.md`, `docs/tutorials/CHAT_TASKS_CALENDAR.md`,
+  `docs/tutorials/HERMES.md`.
+
 ## [3.0.0]
 
 This release is the "make it actually work, then make it safe" release. The

@@ -16,6 +16,8 @@ Endpoints
     POST /publish-due    publish every queued/scheduled job that is due
     POST /mcp            generic MCP tool call through nexus_mcp.py
     POST /shutdown       graceful stop (local, token-gated)
+    POST /nexus/chat     instruction chat with the selected brain (SSE) → pending_approval tasks
+    GET|POST /tasks…, /calendar, /calendar.ics, /scheduler  (see agent/nexus_task_routes.py)
     POST /antigravity/chat  Google Antigravity brain, streamed as text/event-stream (token)
     GET  /antigravity/status  is the Antigravity app running / discoverable (token)
 
@@ -67,6 +69,8 @@ sys.path.insert(0, str(ROOT / "agent"))
 import client_config  # noqa: E402
 import brain_bridge  # noqa: E402
 import antigravity_bridge  # noqa: E402
+import nexus_scheduler  # noqa: E402
+from nexus_task_routes import TaskRoutesMixin  # noqa: E402
 VERSION = "3.1.0"
 UI_DIR = ROOT / "ui"
 STARTED = time.time()
@@ -100,7 +104,7 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-class Handler(BaseHTTPRequestHandler):
+class Handler(TaskRoutesMixin, BaseHTTPRequestHandler):
     server_version = f"NexusRelay/{VERSION}"
     protocol_version = "HTTP/1.1"
 
@@ -172,6 +176,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self._origin_allowed():
             return self._error(403, "Origin not allowed by the Nexus relay")
         path = self.path.split("?", 1)[0]
+        if self.task_get(path):
+            return
 
         if path == "/brain/jobs" or path.startswith("/brain/jobs/"):
             if not self._token_ok():
@@ -218,7 +224,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/tools":
             if not self._token_ok():
                 return self._error(401, "Invalid or missing X-Nexus-Token")
-            return self._reply(200, {"ok": True, "endpoints": list(CMD_MAP) + ["activity", "publish", "publish-due", "mcp", "queue", "health", "brand", "social", "brain", "antigravity"]})
+            return self._reply(200, {"ok": True, "endpoints": list(CMD_MAP) + ["activity", "publish", "publish-due", "mcp", "queue", "health", "brand", "social", "brain", "antigravity", "nexus/chat", "tasks", "calendar", "calendar.ics", "scheduler"]})
         if path == "/" or path == "/app":
             self.send_response(302)
             self.send_header("Location", "/app/")
@@ -273,6 +279,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(400, f"invalid JSON body: {e}")
 
         path = self.path.split("?", 1)[0]
+        if self.task_post(path, body):
+            return
         if path == "/browser":
             return self._browser(body)
         if path == "/publish":
@@ -959,6 +967,9 @@ def main() -> int:
     parser.add_argument("--allow-origin", action="append",
                         default=[o for o in os.environ.get("NEXUS_ALLOWED_ORIGINS", "").split(",") if o],
                         help="extra browser origin allowed in LAN mode (e.g. https://nexus.example.com)")
+    parser.add_argument("--no-scheduler", action="store_true",
+                        default=os.environ.get("NEXUS_SCHEDULER", "1") in ("0", "false", "no"),
+                        help="do not run approved tasks at their time (NEXUS_SCHEDULER=0)")
     parser.add_argument("--check-config", action="store_true", help="validate configuration and exit")
     args = parser.parse_args()
 
@@ -992,6 +1003,13 @@ def main() -> int:
         srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
         srv.tls = True              # type: ignore[attr-defined]
 
+    srv.scheduler = None            # type: ignore[attr-defined]
+    if not args.no_scheduler:
+        sch = nexus_scheduler.Scheduler()
+        if sch.start():
+            srv.scheduler = sch     # type: ignore[attr-defined]
+            print(f"    scheduler: on (every {int(sch.interval_s)}s, grace {int(sch.grace.total_seconds() // 60)} min"
+                  f"{', DRY RUN' if sch.dry_run else ''}) — only approved tasks are posted")
     scheme = "https" if srv.tls else "http"   # type: ignore[attr-defined]
     print(f"🛠  Nexus relay v{VERSION} on {scheme}://{args.bind}:{args.port}")
     client = client_config.load_client()
@@ -1002,7 +1020,7 @@ def main() -> int:
             print(f"⚠️  could not seed client brand: {e}")
         print(f"    client: {client['business_name']} ({client.get('x_handle') or 'no X handle'})"
               f"{' · brand locked' if client.get('lock_brand') else ''} · profiles {client_config.profiles_dir(LOGS / 'profiles')}")
-    print("    endpoints: /health /queue /browser /publish /publish-due /social /brand /mcp  ·  UI at /app/")
+    print("    endpoints: /health /queue /browser /publish /publish-due /social /brand /mcp /nexus/chat /tasks /calendar  ·  UI at /app/")
     if args.token:
         print("    auth: X-Nexus-Token required ✔")
     else:
@@ -1017,6 +1035,8 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\n[relay] stopped by user")
     finally:
+        if getattr(srv, "scheduler", None):
+            srv.scheduler.stop()
         srv.server_close()
     return 0
 

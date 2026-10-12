@@ -44,7 +44,7 @@ if [ "$RUN_LINT" = "1" ]; then
         bad "Python syntax errors"
     fi
 
-    for f in ui/script.js ui/ai-client.js ui/sw.js; do
+    for f in ui/script.js ui/ai-client.js ui/sw.js ui/nexus-tasks.js; do
         if command -v "$NODE" >/dev/null 2>&1; then
             if "$NODE" --check "$f" >/dev/null 2>&1; then ok "$f parses"; else bad "$f has a syntax error"; fi
         fi
@@ -53,7 +53,7 @@ if [ "$RUN_LINT" = "1" ]; then
     # Every element the JS reaches for must exist in the markup, or a whole
     # feature silently dies at runtime.
     if [ -f ui/index.html ]; then
-        grep -oE "getElementById\(['\`][^'\`]+['\`]\)" ui/script.js \
+        cat ui/script.js ui/nexus-tasks.js | grep -oE "getElementById\(['\`][^'\`]+['\`]\)" \
             | sed -E "s/getElementById\(['\`]([^'\`]+)['\`]\)/\1/" | sort -u > /tmp/nexus_js_ids.txt
         grep -oE 'id="[^"]+"' ui/index.html | sed -E 's/id="([^"]+)"/\1/' | sort -u > /tmp/nexus_html_ids.txt
         MISSING="$(comm -23 /tmp/nexus_js_ids.txt /tmp/nexus_html_ids.txt | grep -v '\${' || true)"
@@ -94,7 +94,7 @@ if [ "$RUN_UI" = "1" ]; then
     section "Front-end tests"
     if ! command -v "$NODE" >/dev/null 2>&1; then
         printf '  (skipped — node not found)\n'
-    elif "$NODE" tests/test_ui.mjs; then
+    elif "$NODE" tests/test_ui.mjs && "$NODE" tests/test_tasks_ui.mjs; then
         ok "front-end suite passed"
     else
         bad "front-end suite failed"

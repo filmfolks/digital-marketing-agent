@@ -47,4 +47,7 @@ _os.environ.pop("NEXUS_CDP_URL", None)   # attach mode is opt-in per test
 # Tests (and the CLIs they spawn) must never write the real audit/activity logs.
 _os.environ.setdefault("NEXUS_AUDIT_LOG", _os.path.join(__import__("tempfile").mkdtemp(prefix="nexus-audit-"), "browser_audit.jsonl"))
 _os.environ.setdefault("NEXUS_ACTIVITY_LOG", _os.path.join(__import__("tempfile").mkdtemp(prefix="nexus-activity-"), "activity_log.jsonl"))
+# Task store / calendar data (data/tasks) goes to a throwaway folder too.
+_os.environ.setdefault("NEXUS_DATA_DIR", __import__("tempfile").mkdtemp(prefix="nexus-data-"))
+_os.environ.setdefault("NEXUS_TZ", "Asia/Kolkata")
 _os.environ.setdefault("NEXUS_LINK_MEMORY", _os.path.join(__import__("tempfile").mkdtemp(prefix="nexus-links-"), "link_memory.json"))

@@ -207,6 +207,9 @@ const PAGE_TITLES = {
     logs: 'Agent Logs',
     activity: 'Agent Activity Log',
     tutorial: 'Tutorial',
+    chat: 'Nexus Chat',
+    taskcal: 'Task Calendar',
+    tasks: 'Tasks',
 };
 
 function switchPage(pageId) {
@@ -242,6 +245,7 @@ function switchPage(pageId) {
     if (pageId === 'browser') initBrowserPage();
     if (pageId === 'utm') applyUtmPreset();
     if (pageId === 'brand') initBrandPage();
+    window.NexusTasksUI?.onPage(pageId);   // ui/nexus-tasks.js: chat, taskcal, tasks
 }
 
 document.querySelectorAll('.nav-link').forEach(link => {

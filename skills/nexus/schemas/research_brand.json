@@ -1,0 +1,16 @@
+{
+  "type": "function",
+  "function": {
+    "name": "research_brand",
+    "description": "Return what Nexus already knows about the brand: saved website/Google-profile research and the profile summary. Use before planning.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "brand": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

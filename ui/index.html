@@ -54,6 +54,15 @@
                 <li class="nav-item" data-page="calendar">
                     <a href="#" class="nav-link"><i class="ph ph-calendar-blank"></i><span>Content Calendar</span></a>
                 </li>
+                <li class="nav-item" data-page="chat">
+                    <a href="#" class="nav-link"><i class="ph ph-chats-circle"></i><span>Nexus Chat</span></a>
+                </li>
+                <li class="nav-item" data-page="taskcal">
+                    <a href="#" class="nav-link"><i class="ph ph-calendar-check"></i><span>Task Calendar</span></a>
+                </li>
+                <li class="nav-item" data-page="tasks">
+                    <a href="#" class="nav-link"><i class="ph ph-list-checks"></i><span>Tasks</span></a>
+                </li>
             </ul>
 
             <div class="nav-section-label">CHANNELS</div>
@@ -537,6 +546,65 @@
             </div>
 
             <!-- ═══ PAGE: CALENDAR ═══ -->
+            <!-- ═══ Nexus Chat (instruction chat → pending_approval tasks) ═══ -->
+            <div class="page-content" id="page-chat">
+                <div class="glass-card fade-up nt-chat">
+                    <div class="card-header">
+                        <h3><i class="ph ph-chats-circle"></i> Nexus Chat</h3>
+                        <select id="ntBrain" class="form-input nt-brain" aria-label="Brain"></select>
+                    </div>
+                    <p class="helper-text">Tell Nexus what to plan. It creates tasks that <strong>wait for your approval</strong>; nothing is posted until you approve it, and approved posts go out at their scheduled time.</p>
+                    <div class="nt-examples">
+                        <button class="btn btn-ghost btn-sm" data-example="Plan 3 Instagram posts for next week">3 posts next week</button>
+                        <button class="btn btn-ghost btn-sm" data-example="Plan the campaign for this whole month on Instagram and Facebook">Plan this month</button>
+                        <button class="btn btn-ghost btn-sm" data-example="What is waiting for my approval?">What needs approval?</button>
+                    </div>
+                    <div id="ntChatLog" class="nt-chat-log" aria-live="polite"></div>
+                    <div class="nt-chat-input">
+                        <textarea id="ntChatInput" class="form-input" rows="2" placeholder="e.g. plan 3 Instagram posts for next week for our burger launch"></textarea>
+                        <button id="ntChatSend" class="btn btn-primary"><i class="ph ph-paper-plane-tilt"></i> Send</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ Task Calendar ═══ -->
+            <div class="page-content" id="page-taskcal">
+                <div class="glass-card fade-up">
+                    <div class="card-header">
+                        <h3><i class="ph ph-calendar-check"></i> Task Calendar <small id="ntCalTz" class="helper-text"></small></h3>
+                        <div class="calendar-nav">
+                            <button class="btn btn-ghost btn-sm" id="ntCalPrev" aria-label="Previous"><i class="ph ph-caret-left"></i></button>
+                            <span id="ntCalLabel" class="calendar-month-label"></span>
+                            <button class="btn btn-ghost btn-sm" id="ntCalNext" aria-label="Next"><i class="ph ph-caret-right"></i></button>
+                            <button class="btn btn-ghost btn-sm" id="ntCalToday">Today</button>
+                        </div>
+                        <select id="ntCalView" class="form-input nt-view"><option value="month">Month</option><option value="week">Week</option></select>
+                        <button class="btn btn-ghost btn-sm" id="ntCalIcs"><i class="ph ph-download-simple"></i> .ics</button>
+                        <button class="btn btn-primary btn-sm" id="ntCalApproveAll"><i class="ph ph-check-circle"></i> Approve visible</button>
+                    </div>
+                    <p class="helper-text">Drag a post to another day to move it (time is kept). Click a post to approve, edit or reschedule. <span id="ntCalPending"></span></p>
+                    <div id="ntCalGrid" class="nt-cal"></div>
+                </div>
+                <div id="ntCalDetail" class="glass-card hidden"></div>
+            </div>
+
+            <!-- ═══ Tasks ═══ -->
+            <div class="page-content" id="page-tasks">
+                <div class="glass-card fade-up">
+                    <div class="card-header">
+                        <h3><i class="ph ph-list-checks"></i> Tasks</h3>
+                        <select id="ntTaskStatus" class="form-input">
+                            <option value="">All</option><option value="pending_approval" selected>Needs approval</option>
+                            <option value="approved">Approved</option><option value="done">Posted</option>
+                            <option value="failed">Failed</option><option value="draft">Draft</option><option value="cancelled">Cancelled</option>
+                        </select>
+                        <button class="btn btn-ghost btn-sm" id="ntTaskRefresh"><i class="ph ph-arrows-clockwise"></i></button>
+                        <button class="btn btn-ghost btn-sm" id="ntTaskNew"><i class="ph ph-plus"></i> New task</button>
+                    </div>
+                    <div id="ntTaskList" class="nt-cards"></div>
+                </div>
+            </div>
+
             <div class="page-content" id="page-calendar">
                 <p class="helper-text" id="calendarSummary" style="margin-bottom:10px"></p>
                 <div class="glass-card calendar-card fade-up">
@@ -2219,6 +2287,7 @@ var res = $.http.get("http://localhost:8957/brief"); // supergateway bridge</cod
     <script src="client-config.js"></script>
     <script src="ai-client.js"></script>
     <script src="script.js"></script>
+    <script src="nexus-tasks.js"></script>
     <script>
         if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
             navigator.serviceWorker.register('sw.js').catch(() => {});

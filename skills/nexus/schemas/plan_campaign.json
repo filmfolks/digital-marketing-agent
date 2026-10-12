@@ -1,0 +1,93 @@
+{
+  "type": "function",
+  "function": {
+    "name": "plan_campaign",
+    "description": "Plan a campaign (e.g. a whole month): returns many dated posts with captions, SEO hashtags and poster ideas. Every post becomes a pending_approval task.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "goal": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "brand": {
+          "type": "string"
+        },
+        "start": {
+          "type": "string",
+          "description": "YYYY-MM-DD"
+        },
+        "end": {
+          "type": "string",
+          "description": "YYYY-MM-DD"
+        },
+        "posts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "scheduled_at": {
+                "type": "string",
+                "description": "ISO 8601 local date-time, e.g. 2026-10-20T18:30 (user timezone if no offset)"
+              },
+              "platforms": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "x",
+                    "instagram",
+                    "facebook",
+                    "linkedin",
+                    "youtube",
+                    "blog"
+                  ]
+                },
+                "minItems": 1
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 120
+              },
+              "caption": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2200,
+                "description": "Final post text"
+              },
+              "hashtags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 30
+              },
+              "poster_idea": {
+                "type": "string",
+                "maxLength": 600,
+                "description": "Visual / poster concept"
+              }
+            },
+            "required": [
+              "scheduled_at",
+              "platforms",
+              "caption"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 62
+        }
+      },
+      "required": [
+        "name",
+        "posts"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

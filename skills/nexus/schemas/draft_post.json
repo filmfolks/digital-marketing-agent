@@ -1,0 +1,59 @@
+{
+  "type": "function",
+  "function": {
+    "name": "draft_post",
+    "description": "Write one social post and save it as a pending_approval task (optionally scheduled). Nothing is published.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "platforms": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "x",
+              "instagram",
+              "facebook",
+              "linkedin",
+              "youtube",
+              "blog"
+            ]
+          },
+          "minItems": 1
+        },
+        "caption": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 5000
+        },
+        "hashtags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 30
+        },
+        "poster_idea": {
+          "type": "string",
+          "maxLength": 600
+        },
+        "scheduled_at": {
+          "type": "string",
+          "description": "ISO 8601 local date-time, e.g. 2026-10-20T18:30 (user timezone if no offset)"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "brand": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "platforms",
+        "caption"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

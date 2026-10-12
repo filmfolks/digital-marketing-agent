@@ -1,0 +1,24 @@
+{
+  "type": "function",
+  "function": {
+    "name": "get_calendar",
+    "description": "Get scheduled tasks grouped by day for a date range (default: next 30 days).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "type": "string",
+          "description": "YYYY-MM-DD"
+        },
+        "end": {
+          "type": "string",
+          "description": "YYYY-MM-DD"
+        },
+        "brand": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

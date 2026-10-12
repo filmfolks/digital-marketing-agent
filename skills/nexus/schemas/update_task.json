@@ -1,0 +1,56 @@
+{
+  "type": "function",
+  "function": {
+    "name": "update_task",
+    "description": "Edit a task's text, platforms, title, hashtags or poster idea. Cannot approve; edits to an approved post send it back for approval.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "minLength": 3
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 5000
+        },
+        "platforms": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "x",
+              "instagram",
+              "facebook",
+              "linkedin",
+              "youtube",
+              "blog"
+            ]
+          }
+        },
+        "hashtags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "poster_idea": {
+          "type": "string",
+          "maxLength": 600
+        },
+        "instruction": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

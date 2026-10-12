@@ -1,0 +1,39 @@
+{
+  "type": "function",
+  "function": {
+    "name": "list_tasks",
+    "description": "List tasks, optionally filtered by status, brand or date range.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "draft",
+            "pending_approval",
+            "approved",
+            "running",
+            "done",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "brand": {
+          "type": "string"
+        },
+        "start": {
+          "type": "string"
+        },
+        "end": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
