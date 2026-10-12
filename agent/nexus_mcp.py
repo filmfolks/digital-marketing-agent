@@ -39,6 +39,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BROWSER_SCRIPT = ROOT / "agent" / "browser_automation.py"
 PUBLISHER = ROOT / "agent" / "publish.py"
+SOCIAL_SCRIPT = ROOT / "agent" / "social_browser_agent.py"
 LOGS_DIR = ROOT / "logs"
 
 
@@ -295,6 +296,73 @@ def tool_read_agent_logs(params):
             "note": "Browser UI logs: use Agent Logs page → Export JSON to share them."}
 
 
+def tool_social_browser_post(params):
+    """Post to social media via browser automation without API keys."""
+    if not params.get("user_permission_granted"):
+        return {"ok": False, "error": "user_permission_granted=true is required to perform browser actions"}
+    workflow = params.get("workflow", "instagram_post")
+    args = ["--allow-actions", workflow]
+    if workflow == "instagram_post":
+        if not params.get("caption"):
+            return {"ok": False, "error": "caption is required"}
+        args.extend(["--caption", str(params["caption"])])
+        if params.get("image"):
+            args.extend(["--image", str(params["image"])])
+    elif workflow == "facebook_post":
+        if not params.get("message"):
+            return {"ok": False, "error": "message is required"}
+        args.extend(["--message", str(params["message"])])
+        if params.get("page_url"):
+            args.extend(["--page-url", str(params["page_url"])])
+        if params.get("image"):
+            args.extend(["--image", str(params["image"])])
+    elif workflow == "blogger_post":
+        if not params.get("title") or not params.get("body"):
+            return {"ok": False, "error": "title and body are required"}
+        args.extend(["--title", str(params["title"]), "--body", str(params["body"])])
+        if params.get("labels"):
+            args.extend(["--labels", str(params["labels"])])
+        if params.get("blog_url"):
+            args.extend(["--blog-url", str(params["blog_url"])])
+    elif workflow == "generic_post":
+        if not params.get("url") or not params.get("text"):
+            return {"ok": False, "error": "url and text are required"}
+        args.extend(["--url", str(params["url"]), "--text", str(params["text"])])
+        if params.get("selector"):
+            args.extend(["--selector", str(params["selector"])])
+        if params.get("submit"):
+            args.extend(["--submit", str(params["submit"])])
+    elif workflow == "status":
+        args = ["status"]
+    else:
+        return {"ok": False, "error": f"unsupported workflow: {workflow}"}
+
+    result = run_py(SOCIAL_SCRIPT, *args, timeout=240)
+    return {"ok": result.get("ok", False), "workflow": workflow, "data": result.get("data"), "stderr": result.get("stderr")}
+
+
+def tool_canva_automate(params):
+    """Automate Canva design creation or posting to Instagram."""
+    if not params.get("user_permission_granted"):
+        return {"ok": False, "error": "user_permission_granted=true is required to perform browser actions"}
+    action = params.get("action", "create")
+    if action == "create":
+        args = ["--allow-actions", "canva_create", "--template", params.get("template", "instagram post")]
+        if params.get("headline"):
+            args.extend(["--headline", str(params["headline"])])
+        if params.get("out"):
+            args.extend(["--out", str(params["out"])])
+    elif action == "publish_instagram":
+        if not params.get("design_url") or not params.get("caption"):
+            return {"ok": False, "error": "design_url and caption are required"}
+        args = ["--allow-actions", "canva_to_instagram", "--design-url", str(params["design_url"]), "--caption", str(params["caption"])]
+    else:
+        return {"ok": False, "error": f"unsupported action: {action}"}
+
+    result = run_py(SOCIAL_SCRIPT, *args, timeout=240)
+    return {"ok": result.get("ok", False), "action": action, "data": result.get("data"), "stderr": result.get("stderr")}
+
+
 TOOLS = {
     "generate_content":   (tool_generate_content,   "Generate platform-native marketing copy",
                            {"type": "object", "properties": {
@@ -341,6 +409,22 @@ TOOLS = {
                             "required": ["platform", "text"]}),
     "read_publish_queue": (tool_publish_queue,      "Read the local publish queue (scheduled + completed)",
                            {"type": "object", "properties": {"limit": {"type": "integer"}}}),
+    "social_browser_post": (tool_social_browser_post, "Automated human-like social media posting via browser fallback (Instagram, Facebook, Blogger, generic)",
+                           {"type": "object", "properties": {
+                               "workflow": {"type": "string", "enum": ["instagram_post", "facebook_post", "blogger_post", "generic_post", "status"]},
+                               "caption": {"type": "string"}, "message": {"type": "string"},
+                               "title": {"type": "string"}, "body": {"type": "string"}, "labels": {"type": "string"},
+                               "image": {"type": "string"}, "page_url": {"type": "string"}, "blog_url": {"type": "string"},
+                               "url": {"type": "string"}, "text": {"type": "string"}, "selector": {"type": "string"}, "submit": {"type": "string"},
+                               "user_permission_granted": {"type": "boolean"}},
+                            "required": ["workflow", "user_permission_granted"]}),
+    "canva_automate":     (tool_canva_automate,     "Automate Canva template generation and posting to social channels",
+                           {"type": "object", "properties": {
+                               "action": {"type": "string", "enum": ["create", "publish_instagram"]},
+                               "template": {"type": "string"}, "headline": {"type": "string"}, "out": {"type": "string"},
+                               "design_url": {"type": "string"}, "caption": {"type": "string"},
+                               "user_permission_granted": {"type": "boolean"}},
+                            "required": ["action", "user_permission_granted"]}),
 }
 
 

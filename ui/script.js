@@ -1982,6 +1982,119 @@ function browserOut(text) {
 
 function clearBrowserOut() { browserOut('Cleared.'); }
 
+function copyBrowserOut() {
+    const txt = document.getElementById('browserOutput')?.textContent || '';
+    copyToClipboard(txt).then(ok => showToast(ok ? 'Output copied' : 'Copy failed', ok ? 'success' : 'error'));
+}
+
+function updateBrowserPermChip() {
+    const chip = document.getElementById('browserPermChip');
+    const granted = document.getElementById('browserActionsPermission')?.checked;
+    if (!chip) return;
+    if (granted) {
+        chip.textContent = '\u2705 Actions permitted';
+        chip.style.background = 'rgba(74,222,128,.15)';
+        chip.style.color = '#4ade80';
+        showToast('Browser actions permission granted \u2014 use responsibly', 'success');
+        AgentLog.info('browser.permission', 'User granted browser actions permission');
+    } else {
+        chip.textContent = '\uD83D\uDD12 Read-only';
+        chip.style.background = 'rgba(239,68,68,.15)';
+        chip.style.color = '#ef4444';
+        AgentLog.warn('browser.permission', 'Browser actions permission revoked');
+    }
+}
+
+function socialAgentBuildPayload(workflow) {
+    const get = id => (document.getElementById(id)?.value || '').trim();
+    switch (workflow) {
+        case 'instagram_post':
+            return { workflow, caption: get('sa-ig-caption'), image: get('sa-ig-image') };
+        case 'facebook_post':
+            return { workflow, message: get('sa-fb-message'), page_url: get('sa-fb-page'), image: get('sa-fb-image') };
+        case 'blogger_post':
+            return { workflow, title: get('sa-bl-title'), body: get('sa-bl-body'), labels: get('sa-bl-labels') };
+        case 'canva_to_instagram':
+            return { workflow, design_url: get('sa-cig-url'), caption: get('sa-cig-caption') };
+        case 'canva_create':
+            return { workflow, template: get('sa-cv-template') || 'instagram post', headline: get('sa-cv-headline') };
+        case 'generic_post':
+            return { workflow, url: get('sa-gp-url'), selector: get('sa-gp-selector') || 'textarea', text: get('sa-gp-text'), submit: get('sa-gp-submit') };
+        default:
+            return { workflow };
+    }
+}
+
+function socialAgentCli(payload) {
+    const base = 'python3 agent/social_browser_agent.py --allow-actions';
+    const q = s => (s||'').replace(/"/g, "\'");
+    switch (payload.workflow) {
+        case 'instagram_post':
+            return base + ' instagram_post --caption "' + q(payload.caption) + '"' + (payload.image ? ' --image "' + payload.image + '"' : '');
+        case 'facebook_post':
+            return base + ' facebook_post --message "' + q(payload.message) + '"' + (payload.page_url ? ' --page-url "' + payload.page_url + '"' : '') + (payload.image ? ' --image "' + payload.image + '"' : '');
+        case 'blogger_post':
+            return base + ' blogger_post --title "' + q(payload.title) + '" --body "' + q(payload.body) + '"' + (payload.labels ? ' --labels "' + payload.labels + '"' : '');
+        case 'canva_to_instagram':
+            return base + ' canva_to_instagram --design-url "' + payload.design_url + '" --caption "' + q(payload.caption) + '"';
+        case 'canva_create':
+            return base + ' canva_create --template "' + payload.template + '"' + (payload.headline ? ' --headline "' + payload.headline + '"' : '');
+        case 'generic_post':
+            return base + ' generic_post --url "' + payload.url + '" --selector "' + payload.selector + '" --text "' + q(payload.text) + '"';
+        default:
+            return base + ' status';
+    }
+}
+
+async function socialAgentRun(workflow) {
+    if (!document.getElementById('browserActionsPermission')?.checked) {
+        browserOut('\uD83D\uDD10 PERMISSION REQUIRED\n\nGrant "Browser Actions Permission" at the top of this page first.\n\nThis workflow runs:\n' + socialAgentCli(socialAgentBuildPayload(workflow)));
+        showToast('Grant Browser Actions Permission first', 'error');
+        return;
+    }
+    const payload = socialAgentBuildPayload(workflow);
+    const cliCmd = socialAgentCli(payload);
+    browserOut('\u23F3 Running social browser workflow: ' + workflow + '\n\nSending to relay...\n\nCLI equivalent:\n' + cliCmd);
+    AgentLog.info('social.agent', 'Dispatching ' + workflow, payload);
+
+    try {
+        const data = await relayCall('/social', { body: { ...payload, allowActions: true }, ms: 120000 });
+        const out = data?.stdout || JSON.stringify(data, null, 2);
+        let parsed = {};
+        try { parsed = JSON.parse(out); } catch { parsed = {}; }
+        browserOut('\u2705 ' + workflow + ' completed!\n\n' + String(out).slice(0, 6000));
+        AgentLog.success('social.agent', workflow + ' completed', parsed);
+        showToast(workflow.replace(/_/g,' ') + ' done \u2705', 'success');
+        if (parsed.screenshot) {
+            const shotDiv = document.getElementById('socialAgentScreenshot');
+            const shotImg = document.getElementById('socialAgentScreenshotImg');
+            if (shotDiv && shotImg) {
+                shotImg.src = RELAY_URL + '/shots/' + parsed.screenshot.split('/').pop() + '?t=' + Date.now();
+                shotDiv.style.display = 'block';
+            }
+        }
+        State.relayOnline = true;
+    } catch (e) {
+        if (e.status === 403) {
+            browserOut('\u26D4 BLOCKED by safety policy:\n\n' + (e.data?.reason || e.message) + '\n\nCLI:\n' + cliCmd);
+            AgentLog.warn('social.agent.blocked', workflow + ' blocked', e.data);
+            showToast('Blocked by safety policy', 'error');
+            return;
+        }
+        browserOut('\u2139\uFE0F Local relay not running (' + e.message + ').\n\nTo run ' + workflow + ':\n\nStep 1 - Start the relay:\n   python3 agent/nexus_relay.py\n\nStep 2 - Or run directly:\n   ' + cliCmd + '\n\nFirst-time login (opens real Chrome window):\n   ' + cliCmd.replace('--allow-actions', '--allow-actions --headed') + '\n\nSessions saved in logs/social_profile/ - log in only once per platform.\nAll actions audited in logs/browser_audit.jsonl.');
+        AgentLog.info('social.agent.sim', workflow + ' relay offline', payload);
+        State.relayOnline = false;
+    }
+}
+
+function socialAgentLoginFirst(platform) {
+    const platformUrls = { instagram: 'https://www.instagram.com/accounts/login/', facebook: 'https://www.facebook.com/login/', blogger: 'https://accounts.google.com/signin', canva: 'https://www.canva.com/login/' };
+    const url = platformUrls[platform] || 'https://www.instagram.com/accounts/login/';
+    browserOut('\uD83E\uDEAA First-time Login for ' + platform.charAt(0).toUpperCase() + platform.slice(1) + '\n\n1. Run in Terminal (opens Chrome window):\n   python3 agent/social_browser_agent.py --headed status\n\n2. Navigate to: ' + url + '\n\n3. Log in normally, then close browser.\n\n4. Session saved to logs/social_profile/ - automation uses it automatically.\n\nOnly needed once per platform (or when session expires).');
+    AgentLog.info('social.agent', 'Login instructions shown for ' + platform);
+}
+
+
 function cliFor(cmd, url, sel, value) {
     const base = `python3 agent/browser_automation.py`;
     switch (cmd) {

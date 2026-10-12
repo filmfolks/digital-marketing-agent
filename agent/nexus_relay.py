@@ -55,6 +55,7 @@ AGENT_DIR = ROOT / "agent"
 BROWSER = AGENT_DIR / "browser_automation.py"
 PUBLISHER = AGENT_DIR / "publish.py"
 MCP = AGENT_DIR / "nexus_mcp.py"
+SOCIAL = AGENT_DIR / "social_browser_agent.py"
 LOGS = ROOT / "logs"
 VERSION = "3.0.0"
 
@@ -159,6 +160,23 @@ class Handler(BaseHTTPRequestHandler):
             if not self._token_ok():
                 return self._error(401, "Invalid or missing X-Nexus-Token")
             return self._reply(200, {"ok": True, "endpoints": list(CMD_MAP) + ["publish", "publish-due", "mcp", "queue", "health"]})
+        if path.startswith("/shots/"):
+            filename = os.path.basename(path)
+            shot_file = ROOT / "shots" / filename
+            if shot_file.exists() and shot_file.is_file():
+                try:
+                    data = shot_file.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(data)))
+                    origin = self.headers.get("Origin") or "*"
+                    self.send_header("Access-Control-Allow-Origin", origin)
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+                except Exception as e:
+                    return self._error(500, f"could not read shot: {e}")
+            return self._error(404, "screenshot not found")
         return self._error(404, "not found")
 
     def do_POST(self):
@@ -194,6 +212,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._reply(status, payload)
         if path == "/mcp":
             return self._mcp(body)
+        if path == "/social":
+            return self._social(body)
         if path == "/shutdown":
             print("[relay] shutdown requested by the UI")
             self._reply(200, {"ok": True, "stopping": True})
@@ -295,6 +315,76 @@ class Handler(BaseHTTPRequestHandler):
             if msg.get("id") == 2:
                 return self._reply(200, msg.get("result", msg.get("error", {})))
         return self._error(500, proc.stderr[-800:] or "no response from the MCP server")
+
+    def _social(self, body: dict):
+        workflow = body.get("workflow", "status")
+        if workflow != "status" and not body.get("allowActions"):
+            return self._error(403, "Browser actions permission NOT granted. "
+                                    "Enable it on the Browser Agent page first.")
+
+        args = []
+        if body.get("allowActions"):
+            args.append("--allow-actions")
+        if body.get("headed"):
+            args.append("--headed")
+
+        args.append(workflow)
+        if workflow == "instagram_post":
+            if not body.get("caption"):
+                return self._error(400, "caption is required")
+            args.extend(["--caption", str(body["caption"])])
+            if body.get("image"):
+                args.extend(["--image", str(body["image"])])
+        elif workflow == "facebook_post":
+            if not body.get("message"):
+                return self._error(400, "message is required")
+            args.extend(["--message", str(body["message"])])
+            if body.get("page_url"):
+                args.extend(["--page-url", str(body["page_url"])])
+            if body.get("image"):
+                args.extend(["--image", str(body["image"])])
+        elif workflow == "blogger_post":
+            if not body.get("title") or not body.get("body"):
+                return self._error(400, "title and body are required")
+            args.extend(["--title", str(body["title"]), "--body", str(body["body"])])
+            if body.get("labels"):
+                args.extend(["--labels", str(body["labels"])])
+            if body.get("blog_url"):
+                args.extend(["--blog-url", str(body["blog_url"])])
+        elif workflow == "canva_create":
+            if body.get("template"):
+                args.extend(["--template", str(body["template"])])
+            if body.get("headline"):
+                args.extend(["--headline", str(body["headline"])])
+            if body.get("out"):
+                args.extend(["--out", str(body["out"])])
+        elif workflow == "canva_to_instagram":
+            if not body.get("design_url") or not body.get("caption"):
+                return self._error(400, "design_url and caption are required")
+            args.extend(["--design-url", str(body["design_url"]), "--caption", str(body["caption"])])
+        elif workflow == "generic_post":
+            if not body.get("url") or not body.get("text"):
+                return self._error(400, "url and text are required")
+            args.extend(["--url", str(body["url"]), "--text", str(body["text"])])
+            if body.get("selector"):
+                args.extend(["--selector", str(body["selector"])])
+            if body.get("submit"):
+                args.extend(["--submit", str(body["submit"])])
+        elif workflow == "status":
+            pass
+        else:
+            return self._error(400, f"unknown workflow: {workflow}")
+
+        proc = subprocess.run([sys.executable, str(SOCIAL), *args],
+                              capture_output=True, text=True, timeout=240, cwd=str(ROOT))
+        if proc.returncode == 2:
+            return self._error(403, proc.stdout.strip() or proc.stderr[-500:],
+                               blocked=True, cmd=" ".join(args))
+        if proc.returncode != 0:
+            return self._error(500, proc.stderr[-800:] or proc.stdout[-800:] or "social agent command failed",
+                               cmd=" ".join(args), exit=proc.returncode)
+        return self._reply(200, {"ok": True, "workflow": workflow, "cmd": " ".join(args), "exit": 0,
+                                 "stdout": proc.stdout, "stderr": proc.stderr[-500:]})
 
     def _run_python(self, args: list, timeout: int = 300):
         """Run a skill and return (payload, http_status).

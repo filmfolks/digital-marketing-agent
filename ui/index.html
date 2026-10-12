@@ -101,6 +101,9 @@
                 <li class="nav-item" data-page="settings">
                     <a href="#" class="nav-link"><i class="ph ph-sliders-horizontal"></i><span>Settings</span></a>
                 </li>
+                <li class="nav-item" data-page="about">
+                    <a href="#" class="nav-link"><i class="ph ph-info"></i><span>About</span></a>
+                </li>
             </ul>
 
             <div class="sidebar-footer">
@@ -849,22 +852,198 @@
 
             <!-- ═══ PAGE: BROWSER AGENT ═══ -->
             <div class="page-content" id="page-browser">
-                <p class="helper-text" style="margin-bottom:10px">Read-only commands (navigate, snapshot, extract, screenshot, DevTools) run without permission. Click/type stay locked until you grant Browser Actions Permission below. Sessions persist between commands, so you can log in once and keep working.</p>
-                <div class="glass-card fade-up" style="padding:20px; margin-bottom:18px;">
-                    <div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-                        <h3><i class="ph-fill ph-browser"></i> Browser Automation &amp; DevTools Skill</h3>
-                        <span class="chip" id="browserPermChip">🔒 Read-only mode</span>
+
+                <!-- ── Permission Banner ── -->
+                <div class="glass-card fade-up" style="padding:18px 22px; margin-bottom:18px; border:1px solid rgba(245,158,11,0.3); background:rgba(245,158,11,0.05);">
+                    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+                        <div style="flex:1;min-width:260px;">
+                            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+                                <i class="ph-fill ph-browser" style="font-size:1.4rem;color:#f59e0b;"></i>
+                                <strong style="font-size:1.05rem;">Browser Automation Fallback Mode</strong>
+                                <span class="chip" id="browserPermChip" style="background:rgba(239,68,68,.15);color:#ef4444;">🔒 Read-only</span>
+                            </div>
+                            <p class="helper-text" style="margin:0;">When social media APIs aren't connected, the AI agent drives a real Chrome browser — posting like a human with human-like typing delays, mouse movements and session persistence. Every action is logged to <code>logs/browser_audit.jsonl</code>.</p>
+                        </div>
+                        <label style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:10px;cursor:pointer;min-width:280px;">
+                            <input type="checkbox" id="browserActionsPermission" style="width:18px;height:18px;accent-color:#f59e0b;" onchange="updateBrowserPermChip()">
+                            <span style="font-size:.88rem;"><b>Grant Browser Actions Permission</b> — allow agent to click, type &amp; post. Revocable any time. Logout/delete operations are always blocked.</span>
+                        </label>
                     </div>
-                    <p class="helper-text">The agent can drive a real Chrome/Chromium session using <b>Playwright</b> or the raw <b>Chrome DevTools Protocol</b> — inspecting console errors, network timings and DOM like a developer. State-changing actions (click/type/post) are blocked until you grant permission below, and every command is written to an audit trail (<code>logs/browser_audit.jsonl</code> via <code>agent/browser_automation.py</code>).</p>
-                    <label style="display:flex;align-items:center;gap:10px;margin:14px 0;padding:12px;background:rgba(255,255,59,0.05);border:1px solid rgba(255,255,59,0.2);border-radius:10px;cursor:pointer;">
-                        <input type="checkbox" id="browserActionsPermission" style="width:18px;height:18px;">
-                        <span><b>Grant Browser Actions Permission</b> — allow the agent to click, type and publish on pages I have approved. Revocable anytime. Unauthorized sites remain blocked by the deny-list (logout/delete-account etc.).</span>
-                    </label>
                 </div>
 
+                <!-- ── Setup Guide ── -->
+                <div class="glass-card fade-up" style="padding:18px 22px; margin-bottom:18px;">
+                    <div class="card-header" style="margin-bottom:10px;">
+                        <h3><i class="ph ph-wrench"></i> One-time Setup (run once in Terminal)</h3>
+                    </div>
+                    <div class="schedule-code-block">
+                        <div class="code-header"><span>Install Playwright browser engine</span><button onclick="copyCode('setupPlaywright')" class="btn btn-ghost btn-sm"><i class="ph ph-copy"></i></button></div>
+                        <code id="setupPlaywright">pip install playwright playwright-stealth pillow
+playwright install chromium
+cd /path/to/digital-marketing-agent
+python3 agent/nexus_relay.py   # start local relay (keep this terminal open)</code>
+                    </div>
+                    <p class="helper-text" style="margin-top:10px;">Then open the browser in <b>headed mode</b> once to log in to each platform — sessions persist in <code>logs/social_profile/</code> so you only log in once. First-run login command: <code>python3 agent/social_browser_agent.py status --headed</code></p>
+                </div>
+
+                <!-- ── Social Automation Workflows ── -->
+                <h3 style="margin:0 0 14px; font-size:1rem; opacity:.7; letter-spacing:.08em; text-transform:uppercase;"><i class="ph ph-robot"></i> One-Click Social Posting Workflows</h3>
+
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:22px;">
+
+                    <!-- Instagram -->
+                    <div class="glass-card fade-up" style="padding:20px; border-top:3px solid #e1306c;">
+                        <div class="card-header">
+                            <i class="ph-fill ph-instagram-logo" style="font-size:1.3rem;background:var(--ig-grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent;"></i>
+                            <h3 style="margin-left:6px;">Instagram Post</h3>
+                            <span class="chip" style="background:rgba(225,48,108,.15);color:#e1306c;font-size:.7rem;">Browser Agent</span>
+                        </div>
+                        <p class="helper-text">AI agent opens instagram.com, creates a new post with your image &amp; caption — no API key needed.</p>
+                        <div class="form-field" style="margin-top:10px;">
+                            <label>Caption (with #hashtags)</label>
+                            <textarea id="sa-ig-caption" rows="3" placeholder="Excited to share our latest update! 🚀 #marketing #ai"></textarea>
+                        </div>
+                        <div class="form-field">
+                            <label>Image path (local file)</label>
+                            <input type="text" id="sa-ig-image" placeholder="/path/to/image.jpg  (or leave empty)">
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+                            <button class="btn btn-sm" style="background:linear-gradient(135deg,#f58529,#dd2a7b,#515bd4);color:#fff;flex:1;" onclick="socialAgentRun('instagram_post')"><i class="ph-fill ph-instagram-logo"></i> Post to Instagram</button>
+                            <button class="btn btn-ghost btn-sm" onclick="socialAgentLoginFirst('instagram')"><i class="ph ph-sign-in"></i> Login first</button>
+                        </div>
+                    </div>
+
+                    <!-- Facebook -->
+                    <div class="glass-card fade-up" style="padding:20px; border-top:3px solid #1877f2;">
+                        <div class="card-header">
+                            <i class="ph-fill ph-facebook-logo" style="font-size:1.3rem;color:#1877f2;"></i>
+                            <h3 style="margin-left:6px;">Facebook Post</h3>
+                            <span class="chip" style="background:rgba(24,119,242,.15);color:#1877f2;font-size:.7rem;">Browser Agent</span>
+                        </div>
+                        <p class="helper-text">Opens your Facebook Page (or profile), clicks the post box, types and submits — like a human.</p>
+                        <div class="form-field" style="margin-top:10px;">
+                            <label>Message</label>
+                            <textarea id="sa-fb-message" rows="3" placeholder="Big news from our brand! Check this out…"></textarea>
+                        </div>
+                        <div class="form-field">
+                            <label>Facebook Page URL (or blank for personal feed)</label>
+                            <input type="text" id="sa-fb-page" placeholder="https://www.facebook.com/YourPageName">
+                        </div>
+                        <div class="form-field">
+                            <label>Image path (optional)</label>
+                            <input type="text" id="sa-fb-image" placeholder="/path/to/image.jpg">
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+                            <button class="btn btn-sm" style="background:#1877f2;color:#fff;flex:1;" onclick="socialAgentRun('facebook_post')"><i class="ph-fill ph-facebook-logo"></i> Post to Facebook</button>
+                            <button class="btn btn-ghost btn-sm" onclick="socialAgentLoginFirst('facebook')"><i class="ph ph-sign-in"></i> Login first</button>
+                        </div>
+                    </div>
+
+                    <!-- Blogger -->
+                    <div class="glass-card fade-up" style="padding:20px; border-top:3px solid #ff6d00;">
+                        <div class="card-header">
+                            <i class="ph ph-article" style="font-size:1.3rem;color:#ff6d00;"></i>
+                            <h3 style="margin-left:6px;">Blogger / Blogspot</h3>
+                            <span class="chip" style="background:rgba(255,109,0,.15);color:#ff6d00;font-size:.7rem;">Browser Agent</span>
+                        </div>
+                        <p class="helper-text">Opens Blogger's editor, types your article title &amp; body, adds labels and publishes — fully automated.</p>
+                        <div class="form-field" style="margin-top:10px;">
+                            <label>Post Title</label>
+                            <input type="text" id="sa-bl-title" placeholder="My AI-Generated Blog Post">
+                        </div>
+                        <div class="form-field">
+                            <label>Body (plain text or HTML)</label>
+                            <textarea id="sa-bl-body" rows="4" placeholder="Full blog post content here…"></textarea>
+                        </div>
+                        <div class="form-field">
+                            <label>Labels (comma-separated)</label>
+                            <input type="text" id="sa-bl-labels" placeholder="AI, Marketing, Tech">
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+                            <button class="btn btn-sm" style="background:linear-gradient(135deg,#ff6d00,#ff9800);color:#fff;flex:1;" onclick="socialAgentRun('blogger_post')"><i class="ph ph-article"></i> Publish to Blogger</button>
+                            <button class="btn btn-ghost btn-sm" onclick="socialAgentLoginFirst('blogger')"><i class="ph ph-sign-in"></i> Login first</button>
+                        </div>
+                    </div>
+
+                    <!-- Canva → Instagram -->
+                    <div class="glass-card fade-up" style="padding:20px; border-top:3px solid #7d2ae8;">
+                        <div class="card-header">
+                            <i class="ph ph-paint-brush-broad" style="font-size:1.3rem;color:#7d2ae8;"></i>
+                            <h3 style="margin-left:6px;">Canva → Instagram Pipeline</h3>
+                            <span class="chip" style="background:rgba(125,42,232,.15);color:#7d2ae8;font-size:.7rem;">Full E2E</span>
+                        </div>
+                        <p class="helper-text">Downloads your Canva design as PNG, then automatically posts it to Instagram. Full end-to-end pipeline.</p>
+                        <div class="form-field" style="margin-top:10px;">
+                            <label>Canva Design URL (editor link)</label>
+                            <input type="text" id="sa-cig-url" placeholder="https://www.canva.com/design/DAG.../edit">
+                        </div>
+                        <div class="form-field">
+                            <label>Instagram Caption</label>
+                            <textarea id="sa-cig-caption" rows="2" placeholder="Designed with Canva ✨ #design"></textarea>
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+                            <button class="btn btn-sm" style="background:linear-gradient(135deg,#7d2ae8,#e1306c);color:#fff;flex:1;" onclick="socialAgentRun('canva_to_instagram')"><i class="ph ph-arrows-merge"></i> Run Full Pipeline</button>
+                        </div>
+                    </div>
+
+                    <!-- Canva Auto-Create -->
+                    <div class="glass-card fade-up" style="padding:20px; border-top:3px solid #00c4cc;">
+                        <div class="card-header">
+                            <i class="ph ph-magic-wand" style="font-size:1.3rem;color:#00c4cc;"></i>
+                            <h3 style="margin-left:6px;">Canva Auto-Create Design</h3>
+                            <span class="chip" style="background:rgba(0,196,204,.15);color:#00c4cc;font-size:.7rem;">Browser Agent</span>
+                        </div>
+                        <p class="helper-text">Opens Canva, searches a template, applies your headline and downloads the PNG to your <code>shots/</code> folder.</p>
+                        <div class="form-field" style="margin-top:10px;">
+                            <label>Template (e.g. "instagram post", "youtube thumbnail")</label>
+                            <input type="text" id="sa-cv-template" placeholder="instagram post" value="instagram post">
+                        </div>
+                        <div class="form-field">
+                            <label>Headline text</label>
+                            <input type="text" id="sa-cv-headline" placeholder="Summer Sale — 50% Off Everything!">
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+                            <button class="btn btn-sm" style="background:linear-gradient(135deg,#00c4cc,#7d2ae8);color:#fff;flex:1;" onclick="socialAgentRun('canva_create')"><i class="ph ph-paint-brush-broad"></i> Create in Canva</button>
+                            <button class="btn btn-ghost btn-sm" onclick="socialAgentLoginFirst('canva')"><i class="ph ph-sign-in"></i> Login first</button>
+                        </div>
+                    </div>
+
+                    <!-- Generic / Custom -->
+                    <div class="glass-card fade-up" style="padding:20px; border-top:3px solid var(--c-accent);">
+                        <div class="card-header">
+                            <i class="ph ph-code" style="font-size:1.3rem;color:var(--c-accent);"></i>
+                            <h3 style="margin-left:6px;">Generic Browser Post</h3>
+                            <span class="chip" style="background:rgba(124,58,237,.15);color:var(--c-accent);font-size:.7rem;">Custom</span>
+                        </div>
+                        <p class="helper-text">Navigate to any URL, find a text area by CSS selector, type your message and click submit. Works as a fallback for any platform.</p>
+                        <div class="form-field" style="margin-top:10px;">
+                            <label>Target URL</label>
+                            <input type="text" id="sa-gp-url" placeholder="https://your-platform.com/post">
+                        </div>
+                        <div class="form-field">
+                            <label>Text area CSS selector</label>
+                            <input type="text" id="sa-gp-selector" placeholder="textarea" value="textarea">
+                        </div>
+                        <div class="form-field">
+                            <label>Text to type</label>
+                            <textarea id="sa-gp-text" rows="2" placeholder="Your message here…"></textarea>
+                        </div>
+                        <div class="form-field">
+                            <label>Submit button selector</label>
+                            <input type="text" id="sa-gp-submit" placeholder="button[type='submit']" value="button[type='submit']">
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+                            <button class="btn btn-sm" style="background:var(--accent-grad);color:#fff;flex:1;" onclick="socialAgentRun('generic_post')"><i class="ph ph-paper-plane-tilt"></i> Run Generic Post</button>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- ── DevTools Command Console ── -->
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
                     <div class="glass-card fade-up" style="padding:20px;">
-                        <div class="card-header"><h3><i class="ph ph-compass"></i> Command Console</h3></div>
+                        <div class="card-header"><h3><i class="ph ph-compass"></i> Raw DevTools Console</h3></div>
+                        <p class="helper-text" style="margin-bottom:10px;">Low-level CDP/Playwright commands for debugging and inspection.</p>
                         <div class="form-field">
                             <label>URL to browse</label>
                             <input type="text" id="browserUrl" placeholder="https://example.com" value="https://example.com">
@@ -892,16 +1071,35 @@
                         </div>
                     </div>
                     <div class="glass-card fade-up" style="padding:20px;">
-                        <div class="card-header"><h3><i class="ph ph-terminal-window"></i> Output</h3>
+                        <div class="card-header"><h3><i class="ph ph-terminal-window"></i> Agent Output</h3>
                             <span style="flex:1"></span>
                             <button class="btn btn-ghost btn-sm" onclick="clearBrowserOut()"><i class="ph ph-trash"></i></button>
+                            <button class="btn btn-ghost btn-sm" onclick="copyBrowserOut()"><i class="ph ph-copy"></i></button>
                         </div>
-                        <pre id="browserOutput" style="max-height:420px;overflow:auto;background:rgba(0,0,0,.35);border-radius:10px;padding:14px;font-size:.78rem;white-space:pre-wrap;">Waiting for command… Tip: with no local relay running, commands show the exact CLI equivalent and open a simulated result so you can learn the flow.</pre>
+                        <pre id="browserOutput" style="max-height:520px;overflow:auto;background:rgba(0,0,0,.35);border-radius:10px;padding:14px;font-size:.78rem;white-space:pre-wrap;">🤖 Social Browser Agent ready.
+
+No relay running yet? Start it:
+  python3 agent/nexus_relay.py
+
+Need browser engine?
+  pip install playwright playwright-stealth
+  playwright install chromium
+
+First time login (opens real browser window):
+  python3 agent/social_browser_agent.py status --headed
+
+All social posting workflows write a screenshot to shots/
+and an audit entry to logs/browser_audit.jsonl.</pre>
+                        <div id="socialAgentScreenshot" style="margin-top:12px;display:none;">
+                            <p style="font-size:.8rem;opacity:.7;margin-bottom:6px;"><i class="ph ph-camera"></i> Last screenshot:</p>
+                            <img id="socialAgentScreenshotImg" src="" alt="Agent screenshot" style="max-width:100%;border-radius:8px;border:1px solid var(--c-border);">
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- ═══ PAGE: MCP & INTEGRATIONS ═══ -->
+
+                        <!-- ═══ PAGE: MCP & INTEGRATIONS ═══ -->
             <div class="page-content" id="page-integrations">
                 <div class="glass-card fade-up" style="padding:20px; margin-bottom:18px;">
                     <div class="card-header"><h3><i class="ph ph-plugs"></i> MCP Server — connect Nexus to any agent host</h3></div>
@@ -1764,8 +1962,104 @@ var res = $.http.get("http://localhost:8957/brief"); // supergateway bridge</cod
                 </div>
             </div>
 
+
+            <!-- ═══ PAGE: ABOUT ═══ -->
+            <div class="page-content" id="page-about">
+                <div class="glass-card fade-up" style="padding:0;overflow:hidden;margin-bottom:22px;">
+                    <!-- Hero banner -->
+                    <div style="background:linear-gradient(135deg,#0f172a 0%,#1e1b4b 40%,#312e81 70%,#4c1d95 100%);padding:60px 40px;text-align:center;position:relative;overflow:hidden;">
+                        <div style="position:absolute;top:-60px;left:-60px;width:300px;height:300px;background:radial-gradient(circle,rgba(124,58,237,.4),transparent 70%);pointer-events:none;"></div>
+                        <div style="position:absolute;bottom:-80px;right:-80px;width:400px;height:400px;background:radial-gradient(circle,rgba(14,165,233,.3),transparent 70%);pointer-events:none;"></div>
+                        <div style="position:relative;z-index:1;">
+                            <div style="width:80px;height:80px;background:var(--accent-grad);border-radius:22px;display:flex;align-items:center;justify-content:center;font-size:2.5rem;margin:0 auto 20px;box-shadow:0 8px 32px rgba(124,58,237,.5);"><i class="ph-fill ph-planet"></i></div>
+                            <h1 style="font-size:2.5rem;font-weight:800;margin:0 0 8px;background:linear-gradient(135deg,#fff,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Nexus Command Center</h1>
+                            <p style="font-size:1.1rem;opacity:.7;margin:0 0 20px;">AI-Powered Digital Marketing &amp; Social Media Automation Suite</p>
+                            <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+                                <span style="background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);border-radius:20px;padding:6px 16px;font-size:.82rem;">v3.0 — Browser Agent Edition</span>
+                                <span style="background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);border-radius:20px;padding:6px 16px;font-size:.82rem;">Open Source</span>
+                                <span style="background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);border-radius:20px;padding:6px 16px;font-size:.82rem;">Runs locally — 8 GB RAM</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Designed by Thosho Tech -->
+                    <div style="padding:36px 40px;text-align:center;border-bottom:1px solid var(--c-border);">
+                        <p style="font-size:.88rem;opacity:.6;margin:0 0 10px;letter-spacing:.1em;text-transform:uppercase;">Designed &amp; Developed by</p>
+                        <a href="https://thoshotech.com" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:14px;text-decoration:none;padding:16px 30px;background:linear-gradient(135deg,rgba(124,58,237,.12),rgba(14,165,233,.12));border:1px solid rgba(124,58,237,.35);border-radius:18px;transition:all .3s;" onmouseover="this.style.transform='translateY(-3px)';this.style.boxShadow='0 12px 40px rgba(124,58,237,.25)'" onmouseout="this.style.transform='none';this.style.boxShadow='none'">
+                            <div style="width:50px;height:50px;background:linear-gradient(135deg,#7c3aed,#0ea5e9);border-radius:14px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 15px rgba(124,58,237,.4);">
+                                <i class="ph-fill ph-rocket-launch" style="font-size:1.6rem;color:#fff;"></i>
+                            </div>
+                            <div style="text-align:left;">
+                                <div style="font-size:1.5rem;font-weight:800;background:linear-gradient(135deg,#a78bfa,#38bdf8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Thosho Tech</div>
+                                <div style="font-size:.8rem;opacity:.6;color:#fff;">thoshotech.com</div>
+                            </div>
+                            <i class="ph ph-arrow-square-out" style="opacity:.5;font-size:1.1rem;color:#a78bfa;"></i>
+                        </a>
+                    </div>
+
+                    <!-- Feature grid -->
+                    <div style="padding:36px 40px;">
+                        <h2 style="text-align:center;margin:0 0 28px;font-size:1.3rem;">What Nexus Can Do</h2>
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;">
+                            <div style="padding:22px;background:rgba(255,255,255,.03);border:1px solid var(--c-border);border-radius:14px;text-align:center;">
+                                <i class="ph-fill ph-robot" style="font-size:2.2rem;color:#a78bfa;margin-bottom:12px;display:block;"></i>
+                                <strong>3-Tier AI Engine</strong>
+                                <p style="font-size:.8rem;opacity:.6;margin:8px 0 0;">Antigravity → Cloud APIs → Local LLM with automatic failover</p>
+                            </div>
+                            <div style="padding:22px;background:rgba(255,255,255,.03);border:1px solid var(--c-border);border-radius:14px;text-align:center;">
+                                <i class="ph-fill ph-browser" style="font-size:2.2rem;color:#38bdf8;margin-bottom:12px;display:block;"></i>
+                                <strong>Browser Fallback</strong>
+                                <p style="font-size:.8rem;opacity:.6;margin:8px 0 0;">Posts via real Chrome browser when APIs aren't set up</p>
+                            </div>
+                            <div style="padding:22px;background:rgba(255,255,255,.03);border:1px solid var(--c-border);border-radius:14px;text-align:center;">
+                                <i class="ph-fill ph-paint-brush-broad" style="font-size:2.2rem;color:#7d2ae8;margin-bottom:12px;display:block;"></i>
+                                <strong>Canva Studio</strong>
+                                <p style="font-size:.8rem;opacity:.6;margin:8px 0 0;">Auto-create designs → download → post in one pipeline</p>
+                            </div>
+                            <div style="padding:22px;background:rgba(255,255,255,.03);border:1px solid var(--c-border);border-radius:14px;text-align:center;">
+                                <i class="ph-fill ph-calendar-blank" style="font-size:2.2rem;color:#22d3ee;margin-bottom:12px;display:block;"></i>
+                                <strong>Smart Scheduler</strong>
+                                <p style="font-size:.8rem;opacity:.6;margin:8px 0 0;">Calendar-based scheduling with auto-posting queues</p>
+                            </div>
+                            <div style="padding:22px;background:rgba(255,255,255,.03);border:1px solid var(--c-border);border-radius:14px;text-align:center;">
+                                <i class="ph-fill ph-chart-line-up" style="font-size:2.2rem;color:#34d399;margin-bottom:12px;display:block;"></i>
+                                <strong>Analytics Dashboard</strong>
+                                <p style="font-size:.8rem;opacity:.6;margin:8px 0 0;">UTM tracking, engagement metrics, campaign ROI</p>
+                            </div>
+                            <div style="padding:22px;background:rgba(255,255,255,.03);border:1px solid var(--c-border);border-radius:14px;text-align:center;">
+                                <i class="ph-fill ph-plugs" style="font-size:2.2rem;color:#fb923c;margin-bottom:12px;display:block;"></i>
+                                <strong>MCP + Telegram</strong>
+                                <p style="font-size:.8rem;opacity:.6;margin:8px 0 0;">Control from Cursor, Antigravity or Telegram on your phone</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tech stack -->
+                    <div style="padding:24px 40px;border-top:1px solid var(--c-border);">
+                        <h3 style="margin:0 0 16px;font-size:1rem;">Tech Stack &amp; Open-Source Libraries</h3>
+                        <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                            <span style="background:rgba(255,255,255,.06);border:1px solid var(--c-border);border-radius:20px;padding:5px 14px;font-size:.78rem;">Playwright</span>
+                            <span style="background:rgba(255,255,255,.06);border:1px solid var(--c-border);border-radius:20px;padding:5px 14px;font-size:.78rem;">playwright-stealth</span>
+                            <span style="background:rgba(255,255,255,.06);border:1px solid var(--c-border);border-radius:20px;padding:5px 14px;font-size:.78rem;">Chrome DevTools Protocol</span>
+                            <span style="background:rgba(255,255,255,.06);border:1px solid var(--c-border);border-radius:20px;padding:5px 14px;font-size:.78rem;">Google Antigravity SDK</span>
+                            <span style="background:rgba(255,255,255,.06);border:1px solid var(--c-border);border-radius:20px;padding:5px 14px;font-size:.78rem;">Gemini API</span>
+                            <span style="background:rgba(255,255,255,.06);border:1px solid var(--c-border);border-radius:20px;padding:5px 14px;font-size:.78rem;">LM Studio / Ollama</span>
+                            <span style="background:rgba(255,255,255,.06);border:1px solid var(--c-border);border-radius:20px;padding:5px 14px;font-size:.78rem;">Model Context Protocol (MCP)</span>
+                            <span style="background:rgba(255,255,255,.06);border:1px solid var(--c-border);border-radius:20px;padding:5px 14px;font-size:.78rem;">Canva Connect API</span>
+                            <span style="background:rgba(255,255,255,.06);border:1px solid var(--c-border);border-radius:20px;padding:5px 14px;font-size:.78rem;">Vanilla HTML / CSS / JS</span>
+                        </div>
+                    </div>
+
+                    <!-- Footer -->
+                    <div style="padding:22px 40px;border-top:1px solid var(--c-border);background:rgba(0,0,0,.2);text-align:center;">
+                        <p style="margin:0;font-size:.82rem;opacity:.5;">© 2025–2026 <a href="https://thoshotech.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;opacity:.8;">Thosho Tech</a>. Released under the MIT License. Nexus is not affiliated with Meta, Google, Canva, or any social media platform.</p>
+                    </div>
+                </div>
+            </div>
+
         </main>
     </div>
+
 
     <div class="palette-overlay hidden" id="paletteOverlay" role="dialog" aria-modal="true" aria-label="Command palette">
         <div class="palette-card glass-card">

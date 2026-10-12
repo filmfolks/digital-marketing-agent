@@ -418,29 +418,62 @@ bash skill/digital-marketer/scripts/daily_run.sh
 
 ---
 
-## 16. Browser Automation & DevTools Skill {#browser-automation}
+## 16. Browser Automation, Chrome DevTools & Social Media Fallback {#browser-automation}
 
-The agent can operate a real Chrome/Chromium browser like a developer — powered by `agent/browser_automation.py`.
+The agent features a dual-layer browser automation engine:
+1. **Core DevTools Inspector** (`agent/browser_automation.py`) — page audit, DOM inspection, accessibility snapshots, and generic click/type actions.
+2. **Social Media Fallback Agent** (`agent/social_browser_agent.py`) — automated, human-like social media posting when APIs are unconfigured or unavailable. Designed & Developed by **Thosho Tech** ([thoshotech.com](https://thoshotech.com)).
 
-**Engines (auto-selected):**
-1. **Playwright** (`pip install playwright && playwright install chromium`) — https://github.com/microsoft/playwright
-2. **Chrome DevTools Protocol** directly (`chrome --remote-debugging-port=9222`, `pip install websocket-client`) — https://chromedevtools.github.io/devtools-protocol/
+### Fallback Philosophy: Post Without APIs
+When an API key is missing, expired, or pending platform verification, the agent switches seamlessly to browser automation:
+- **Chrome DevTools & Playwright Session Persistence:** Uses persistent browser contexts in `logs/social_profile/` so the user only logs in once. Subsequent postings run automatically with human-like keystroke delays and natural cursor jitter.
+- **Canva Creative Automation (`canva_create`, `canva_to_instagram`):** Opens Canva templates, injects promotional copy, renders, downloads high-res PNG/JPG creatives, and forwards them directly to Instagram or other channels.
+- **Instagram Posting (`instagram_post`):** Navigates to instagram.com, uploads image files, writes captions with hashtags, and confirms publication.
+- **Facebook Page Posting (`facebook_post`):** Posts text, updates, and visual banners directly to Facebook business pages or timelines.
+- **Blogger / Blogspot (`blogger_post`):** Publishes formatted articles, headings, tags/labels, and body copy directly into Google Blogger.
+- **Generic Web Automation (`generic_post`):** Fallback workflow targeting arbitrary web forms using custom CSS selectors.
 
-**Capabilities:** `navigate` · `snapshot` (accessibility-style DOM tree) · `extract` (CSS selector → texts) · `screenshot` (full page PNG) · `devtools` (console errors, perf timings, network resource list) · `act` (click/type/press/scroll).
-
-**Permission model — the user must allow browsing actions:**
-- Read-only commands run freely but are always written to `logs/browser_audit.jsonl`.
-- State-changing `act` commands require `--allow-actions`, which only gets set when the user ticks **Grant Browser Actions Permission** on the Browser Agent page (UI) or taps **✅ Approve** in Telegram.
-- A deny-list permanently refuses destructive targets (`log out`, `delete account`, `remove payment`, `cancel subscription`) even with permission.
-
+### Command Reference:
 ```bash
-python3 agent/browser_automation.py navigate --url https://example.com
-python3 agent/browser_automation.py devtools --what console      # JS errors on the page
-python3 agent/browser_automation.py act --allow-actions --action click --target "button.publish"
-python3 agent/nexus_relay.py   # localhost:8712 HTTP bridge so the UI drives the above live
+# Check browser engine and session health
+python3 agent/social_browser_agent.py status
+
+# Canva Design Creation:
+python3 agent/social_browser_agent.py canva_create \
+    --template "instagram post" \
+    --headline "Flash Sale 50% Off" \
+    --allow-actions
+
+# Canva Design to Instagram:
+python3 agent/social_browser_agent.py canva_to_instagram \
+    --design-url "https://www.canva.com/design/..." \
+    --caption "Flash sale is live! 🛍️ #sale #discount" \
+    --allow-actions
+
+# Instagram Post:
+python3 agent/social_browser_agent.py instagram_post \
+    --caption "New summer drop is here! 🔥 Link in bio." \
+    --image shots/canva_design.png \
+    --allow-actions
+
+# Facebook Post:
+python3 agent/social_browser_agent.py facebook_post \
+    --message "We are thrilled to announce our latest update!" \
+    --page-url "https://www.facebook.com/YourPage" \
+    --allow-actions
+
+# Blogger Article:
+python3 agent/social_browser_agent.py blogger_post \
+    --title "10 AI Marketing Trends for 2026" \
+    --body "<p>Discover the top AI marketing strategies...</p>" \
+    --labels "AI,Marketing" \
+    --allow-actions
 ```
 
-Use it for: competitor research, verifying published posts render correctly, scraping trend data for content ideas, QA of client landing pages (console + performance audit), and filling publishing forms when APIs are unavailable.
+**Permission & Safety Contract:**
+- Read-only commands run freely; state-changing posts require `--allow-actions` (enabled via UI checkbox or `--allow-actions` flag).
+- All browser interactions, screenshots, and errors are audited to `logs/browser_audit.jsonl`.
+- Destructive operations (logout, account deletion, billing changes) are permanently blocked by safety filters.
 
 ## 17. MCP Server — Connecting External Tools {#mcp-integrations}
 
