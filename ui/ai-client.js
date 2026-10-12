@@ -132,7 +132,19 @@ class AIClient {
         // rather than in one shared slot that a second run would clobber.
         this._runs = new Set();
         this._logHook = null;         // fallback hook for calls outside a run
+        this.brandKey = 'nexus_active_brand_profile';
+        this.brandProfile = null;     // active Brand Profile (Brand Setup page)
+        try { this.brandProfile = JSON.parse(localStorage.getItem(this.brandKey) || 'null'); } catch { this.brandProfile = null; }
         this.loadConfig();
+    }
+
+    /** Make every generation and guardrail pass use this brand. null clears it. */
+    setBrandProfile(profile) {
+        this.brandProfile = profile && typeof profile === 'object' ? profile : null;
+        try {
+            if (this.brandProfile) localStorage.setItem(this.brandKey, JSON.stringify(this.brandProfile));
+            else localStorage.removeItem(this.brandKey);
+        } catch { /* storage full / private mode: keep in memory */ }
     }
 
     /* ── configuration ─────────────────────────────────────────────────────── */
@@ -533,7 +545,7 @@ CRAFT RULES:
 3. One primary call-to-action per asset. Never stack three CTAs.
 4. Never invent metrics, awards, testimonials, prices or statistics. If a claim needs proof, write "[INSERT PROOF]" instead.
 5. Follow AIDA / PAS / Hook-Value-CTA structure where it fits naturally.
-${rules.length ? '\nBRAND GUARDRAILS (hard requirements):\n' + rules.map((r, i) => `${i + 1}. ${r}`).join('\n') : ''}
+${rules.length ? '\nBRAND GUARDRAILS (hard requirements):\n' + rules.map((r, i) => `${i + 1}. ${r}`).join('\n') : ''}${this.brandProfile ? '\n\n' + brandContextBlock(this.brandProfile) + '\nStay strictly on-brand: use only the services, USPs and voice above. Never invent prices, awards or statistics.' : ''}
 
 FORMAT: clean, copy-paste-ready GitHub-flavoured Markdown with bold section labels. No preamble, no "here is your content", no code fences around the whole answer.`;
     }
@@ -628,7 +640,8 @@ FORMAT: clean, copy-paste-ready GitHub-flavoured Markdown with bold section labe
             return this._finishRun(results, runMeta, startedAt, run);
         }
 
-        const guardrails = this.config.guardrails?.enabled ? this.config.guardrails : null;
+        const guardrails = this.config.guardrails?.enabled
+            ? mergeBrandGuardrails(this.config.guardrails, this.brandProfile) : null;
         const systemPrompt = this.buildSystemPrompt({ tone, brand, guardrails });
         let done = 0;
         const total = wanted.length;
@@ -893,6 +906,42 @@ function applyGuardrails(text, g) {
     return { text: out, warnings };
 }
 
+/**
+ * Compact brand block for prompts. Mirrors agent/brand_research.py brand_context()
+ * so UI and Python generation see the same brand.
+ */
+function brandContextBlock(p, maxChars = 2500) {
+    if (!p || typeof p !== 'object') return '';
+    const v = p.brand_voice || {};
+    const meta = [p.category, p.location].filter(Boolean).join(', ');
+    const lines = [`BRAND PROFILE — ${p.business_name || ''}${meta ? ` (${meta})` : ''}`];
+    if (p.value_proposition) lines.push(`Value proposition: ${p.value_proposition}`);
+    if (p.services?.length) lines.push('Services: ' + p.services.slice(0, 10).map(s => s.name).join('; '));
+    if (p.usps?.length) lines.push('Proven USPs (only claim these): ' + p.usps.slice(0, 6).join('; '));
+    if (p.personas?.length) lines.push('Audience: ' + p.personas.slice(0, 3).map(x =>
+        x.name + (x.pains?.length ? ` (pains: ${x.pains.slice(0, 2).join(', ')})` : '')).join(' | '));
+    if (v.adjectives?.length) lines.push('Voice: ' + v.adjectives.join(', '));
+    if (v.do?.length) lines.push('Do: ' + v.do.slice(0, 5).join('; '));
+    if (v.dont?.length) lines.push("Don't: " + v.dont.slice(0, 5).join('; '));
+    if (p.content_pillars?.length) lines.push('Content pillars: ' + p.content_pillars.map(c => c.name).join(', '));
+    const tags = ['branded', 'local', 'niche'].flatMap(k => (p.hashtag_sets?.[k] || []).slice(0, 4));
+    if (tags.length) lines.push('Preferred hashtags: ' + tags.join(' '));
+    if (p.local_seo_keywords?.length) lines.push('Local keywords: ' + p.local_seo_keywords.slice(0, 8).join(', '));
+    if (p.compliance_notes?.length) lines.push('Compliance: ' + p.compliance_notes.slice(0, 4).join('; '));
+    return lines.join('\n').slice(0, maxChars);
+}
+
+/** Owner guardrails + the brand's avoid-words and emoji policy (stricter wins). */
+function mergeBrandGuardrails(g, profile) {
+    const base = { ...(g || {}) };
+    const v = profile?.brand_voice;
+    if (!v) return base;
+    const words = [...(base.bannedWords || []), ...(v.avoid_words || [])].map(w => String(w).trim()).filter(Boolean);
+    base.bannedWords = [...new Set(words.map(w => w.toLowerCase()))];
+    if (v.emoji_policy === 'none') base.allowEmoji = false;
+    return base;
+}
+
 /** Platforms with long-form output need a bigger completion budget. */
 function tokenBudgetFor(platform, base) {
     const p = String(platform || '').toLowerCase();
@@ -1019,5 +1068,5 @@ window.renderMarkdown = renderMarkdown;
 
 // Deterministic helpers exposed for the automated test-suite (tests/test_ui.mjs).
 // They are pure functions, so exporting them adds no runtime risk.
-window.__nexusInternals = { applyGuardrails, tokenBudgetFor, slug, clamp, httpError };
+window.__nexusInternals = { applyGuardrails, tokenBudgetFor, slug, clamp, httpError, brandContextBlock, mergeBrandGuardrails };
 

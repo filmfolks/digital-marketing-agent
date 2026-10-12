@@ -103,6 +103,33 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   check('empty result set shows a message instead of crashing',
         $('tabContent').innerHTML.includes('No content was returned'));
 
+  /* Brand Setup (relay mocked: render a stored bundle directly) */
+  w.switchPage('brand');
+  check('brand page opens with its title', $('pageHeading').textContent === 'Brand Setup');
+  const nb = w.__nexusBrand;
+  nb.state.active = 'acme';
+  nb.state.bundle = {
+    brand: { id: 'acme', business_name: 'Acme <b>Dental</b>', website: 'https://acme.test', handles: { instagram: 'acme' }, location: 'Pune' },
+    research: { pages: [{}, {}], gbp: { ok: true, source: 'places_api', rating: 4.8, review_count: 120 }, researched_at: 'now' },
+    profile: { business_name: 'Acme <img src=x onerror=alert(1)>', services: [{ name: 'Implants' }], usps: ['15 years'],
+               brand_voice: { adjectives: ['warm'], avoid_words: ['cheap'], emoji_policy: 'none' },
+               content_pillars: [{ name: 'Education', share_pct: 100 }], generated_by: 'openai:test' },
+    plan: { goals: [{ goal: 'Leads', kpi: 'enquiries', target: '20' }], channel_mix: [{ platform: 'instagram', share_pct: 100 }],
+            campaigns: [], generated_by: 'heuristic',
+            calendar: [{ day: 1, date: '2026-10-13', platform: 'instagram', format: 'reel', pillar: 'Education', idea: 'Tip <script>', hook: 'h', cta: 'c', status: 'planned' },
+                       { day: 2, date: '2026-10-14', platform: 'x', format: 'post', pillar: 'Education', idea: 'B', hook: '', cta: '', status: 'planned' }] },
+  };
+  nb.renderBrandPage();
+  check('brand form is filled from the stored brand', $('brandFormHandles').value === 'instagram=@acme' && $('brandFormWebsite').value === 'https://acme.test');
+  check('profile renders escaped (no injected markup)',
+        $('brandProfileView').querySelectorAll('img').length === 0 && $('brandProfileView').textContent.includes('Implants'));
+  check('plan calendar renders editable rows', $('brandPlanBody').querySelectorAll('tr').length === 2 &&
+        $('brandPlanBody').querySelectorAll('[contenteditable="true"]').length === 14 &&
+        $('brandPlanBody').querySelectorAll('script').length === 0);
+  check('research summary shows pages and Google source', $('brandResearchSummary').textContent.includes('2 page(s) crawled') &&
+        $('brandResearchSummary').textContent.includes('places_api'));
+  check('profile JSON editor is populated', JSON.parse($('brandProfileEditor').value).generated_by === 'openai:test');
+
   /* UTM builder */
   w.switchPage('utm');
   $('utmBase').value = 'https://brand.test/offer?ref=old';

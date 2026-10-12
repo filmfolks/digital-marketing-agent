@@ -239,6 +239,7 @@ function switchPage(pageId) {
     if (pageId === 'accounts') { setTimeout(() => { initAccountsPage(); refreshQueueView(); }, 50); }
     if (pageId === 'browser') initBrowserPage();
     if (pageId === 'utm') applyUtmPreset();
+    if (pageId === 'brand') initBrandPage();
 }
 
 document.querySelectorAll('.nav-link').forEach(link => {
@@ -4392,3 +4393,227 @@ function clearWorkspace() {
     AgentLog.warn('workspace', 'Workspace cleared by user');
     setTimeout(() => location.reload(), 500);
 }
+
+/* ══════════════════════════════════════════════════════════════
+   BRAND SETUP — multi-brand research → profile → 30-day plan
+   Backend: POST /brand on the relay (agent/brand_research.py).
+══════════════════════════════════════════════════════════════ */
+PAGE_TITLES.brand = 'Brand Setup';
+const BrandUI = { active: null, brands: [], bundle: null };
+const BRAND_PLAN_COLS = ['day', 'date', 'platform', 'format', 'pillar', 'idea', 'hook', 'cta', 'status'];
+const BRAND_EDITABLE = new Set(['platform', 'format', 'pillar', 'idea', 'hook', 'cta', 'status']);
+
+/** "instagram=@acme, x=@acme" → {instagram:'acme', x:'acme'} */
+function parseHandles(text) {
+    const out = {};
+    String(text || '').split(/[,\n]/).forEach(part => {
+        const m = part.match(/^\s*([a-z_]+)\s*[=:]\s*(\S.*?)\s*$/i);
+        if (m) out[m[1].toLowerCase()] = m[2].replace(/^@/, '');
+    });
+    return out;
+}
+
+function brandEsc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function brandProgress(msg) { const el = document.getElementById('brandProgress'); if (el) el.textContent = msg || ''; }
+
+async function brandApi(body, ms = 30000) { return relayCall('/brand', { body, ms }); }
+
+/** Push the active profile into generation: AI client prompt + guardrails + default brand/tone. */
+function applyActiveBrandProfile(profile) {
+    if (window.NexusAI?.setBrandProfile) window.NexusAI.setBrandProfile(profile || null);
+    if (profile && typeof State !== 'undefined' && State.settings) {
+        if (profile.business_name) State.settings.brand = profile.business_name;
+        const tone = profile.brand_voice?.tone;
+        if (tone) State.settings.tone = tone;
+        const bn = document.getElementById('brandName');
+        if (bn && profile.business_name) bn.value = profile.business_name;
+    }
+}
+
+async function refreshBrandList() {
+    const data = await brandApi({ action: 'list' }, 8000);
+    BrandUI.brands = data.brands || [];
+    BrandUI.active = data.active || null;
+    const sel = document.getElementById('brandSwitcher');
+    if (sel) {
+        sel.innerHTML = '<option value="">No brand</option>' + BrandUI.brands.map(b =>
+            `<option value="${brandEsc(b.id)}"${b.id === BrandUI.active ? ' selected' : ''}>${brandEsc(b.business_name)}</option>`).join('');
+    }
+    return data;
+}
+
+async function loadActiveBrand() {
+    if (!BrandUI.active) { BrandUI.bundle = null; applyActiveBrandProfile(null); renderBrandPage(); return; }
+    BrandUI.bundle = await brandApi({ action: 'get', brand_id: BrandUI.active }, 8000);
+    applyActiveBrandProfile(BrandUI.bundle.profile);
+    renderBrandPage();
+}
+
+async function initBrandPage() {
+    try { await refreshBrandList(); await loadActiveBrand(); }
+    catch (e) { brandProgress(`Relay unreachable (${e.message}). Start the relay to use Brand Setup.`); }
+}
+
+async function switchBrand(id) {
+    try {
+        if (id) await brandApi({ action: 'activate', brand_id: id }, 8000);
+        BrandUI.active = id || null;
+        await loadActiveBrand();
+        showToast(id ? `Active brand: ${BrandUI.bundle?.brand?.business_name || id}` : 'No brand selected', 'info');
+    } catch (e) { showToast(`Brand switch failed: ${e.message}`, 'error'); }
+}
+
+function brandFormValues() {
+    const v = id => (document.getElementById(id)?.value || '').trim();
+    return { business_name: v('brandFormName'), website: v('brandFormWebsite'), gbp_url: v('brandFormGbp'),
+             handles: parseHandles(v('brandFormHandles')), location: v('brandFormLocation'), target_market: v('brandFormMarket') };
+}
+
+async function brandCreate() {
+    const brand = brandFormValues();
+    if (!brand.business_name) { showToast('Business name is required', 'error'); return; }
+    try {
+        const res = await brandApi({ action: 'create', brand, activate: true });
+        BrandUI.active = res.active;
+        await refreshBrandList();
+        await loadActiveBrand();
+        showToast(`Saved ${res.brand.business_name}`, 'success');
+    } catch (e) { showToast(`Save failed: ${e.message}`, 'error'); }
+}
+
+async function brandRun(step) {
+    if (!BrandUI.active) { showToast('Save a brand first', 'error'); return; }
+    const ids = ['brandResearchBtn', 'brandProfileBtn', 'brandPlanBtn', 'brandAllBtn'];
+    ids.forEach(i => { const b = document.getElementById(i); if (b) b.disabled = true; });
+    const labels = { research: 'Crawling website and Google Business Profile…', profile: 'Building Brand Profile with AI…',
+                     plan: 'Building 30-day plan with AI…', all: 'Research → profile → plan (this can take a few minutes)…' };
+    brandProgress(labels[step]);
+    try {
+        const body = step === 'all' ? { action: 'research', then: 'plan' } : { action: step };
+        await brandApi({ ...body, brand_id: BrandUI.active }, 600000);
+        await refreshBrandList();
+        await loadActiveBrand();
+        brandProgress('Done.');
+        showToast('Brand updated', 'success');
+    } catch (e) {
+        brandProgress(`Failed: ${e.message}`);
+        showToast(`Brand ${step} failed: ${e.message}`, 'error');
+    } finally {
+        ids.forEach(i => { const b = document.getElementById(i); if (b) b.disabled = false; });
+    }
+}
+
+async function brandDelete() {
+    if (!BrandUI.active || !confirm('Delete this brand and its research, profile and plan from this computer?')) return;
+    try {
+        const res = await brandApi({ action: 'delete', brand_id: BrandUI.active }, 8000);
+        BrandUI.active = res.active || null;
+        await refreshBrandList();
+        await loadActiveBrand();
+    } catch (e) { showToast(`Delete failed: ${e.message}`, 'error'); }
+}
+
+async function brandSave(part) {
+    let data;
+    try { data = JSON.parse(document.getElementById('brandProfileEditor').value); }
+    catch (e) { showToast(`Invalid JSON: ${e.message}`, 'error'); return; }
+    try {
+        await brandApi({ action: 'save', brand_id: BrandUI.active, part, data });
+        await loadActiveBrand();
+        showToast('Profile saved', 'success');
+    } catch (e) { showToast(`Save failed: ${e.message}`, 'error'); }
+}
+
+/** Read edited cells back into the plan calendar. Pure given the plan + rows. */
+function collectPlanEdits(plan, rows) {
+    const next = JSON.parse(JSON.stringify(plan || {}));
+    next.calendar = (next.calendar || []).map((item, i) => {
+        const row = rows[i];
+        if (!row) return item;
+        const out = { ...item };
+        for (const [k, v] of Object.entries(row)) if (BRAND_EDITABLE.has(k)) out[k] = String(v).trim();
+        return out;
+    });
+    return next;
+}
+
+async function brandSavePlanTable() {
+    const plan = BrandUI.bundle?.plan;
+    if (!plan) { showToast('No plan to save', 'error'); return; }
+    const rows = [...document.querySelectorAll('#brandPlanBody tr')].map(tr => {
+        const r = {};
+        tr.querySelectorAll('[data-col]').forEach(td => { r[td.dataset.col] = td.textContent; });
+        return r;
+    });
+    try {
+        await brandApi({ action: 'save', brand_id: BrandUI.active, part: 'plan', data: collectPlanEdits(plan, rows) });
+        await loadActiveBrand();
+        showToast('Plan saved', 'success');
+    } catch (e) { showToast(`Save failed: ${e.message}`, 'error'); }
+}
+
+function downloadText(filename, mime, content) {
+    const url = URL.createObjectURL(new Blob([content], { type: `${mime};charset=utf-8` }));
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function brandExport(fmt) {
+    if (!BrandUI.active) { showToast('No brand selected', 'error'); return; }
+    try {
+        const res = await brandApi({ action: 'export', brand_id: BrandUI.active, format: fmt });
+        downloadText(res.filename, res.mime, res.content);
+    } catch (e) { showToast(`Export failed: ${e.message}`, 'error'); }
+}
+
+function renderBrandProfileHtml(p) {
+    if (!p) return 'No profile yet. Run Research, then Build profile.';
+    const li = arr => (arr || []).map(x => `<li>${brandEsc(typeof x === 'string' ? x : x.name)}</li>`).join('');
+    const v = p.brand_voice || {};
+    return `<p><strong>${brandEsc(p.business_name)}</strong>${p.category ? ' · ' + brandEsc(p.category) : ''}${p.location ? ' · ' + brandEsc(p.location) : ''}</p>
+        ${p.value_proposition ? `<p>${brandEsc(p.value_proposition)}</p>` : ''}
+        <div class="brand-cols">
+          <div><h4>Services</h4><ul>${li(p.services)}</ul></div>
+          <div><h4>USPs</h4><ul>${li(p.usps)}</ul></div>
+          <div><h4>Audience</h4><ul>${li(p.personas)}</ul></div>
+          <div><h4>Pillars</h4><ul>${(p.content_pillars || []).map(c => `<li>${brandEsc(c.name)} — ${brandEsc(c.share_pct)}%</li>`).join('')}</ul></div>
+        </div>
+        <p><strong>Voice:</strong> ${brandEsc((v.adjectives || []).join(', '))}${v.tone ? ' · tone ' + brandEsc(v.tone) : ''}${v.emoji_policy ? ' · emoji ' + brandEsc(v.emoji_policy) : ''}</p>
+        ${(v.avoid_words || []).length ? `<p><strong>Avoid:</strong> ${brandEsc(v.avoid_words.join(', '))}</p>` : ''}`;
+}
+
+function renderBrandPage() {
+    const b = BrandUI.bundle;
+    const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+    set('brandStatusChip', b?.brand ? `Active: ${b.brand.business_name}` : 'No brand selected');
+    const brand = b?.brand || {};
+    const fill = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+    fill('brandFormName', brand.business_name); fill('brandFormWebsite', brand.website); fill('brandFormGbp', brand.gbp_url);
+    fill('brandFormHandles', Object.entries(brand.handles || {}).map(([k, v]) => `${k}=@${v}`).join(', '));
+    fill('brandFormLocation', brand.location); fill('brandFormMarket', brand.target_market);
+    const r = b?.research;
+    set('brandResearchSummary', r ? `Research: ${(r.pages || []).length} page(s) crawled${r.crawl?.error ? ` (${r.crawl.error})` : ""}, Google profile via ${r.gbp?.source || "n/a"}${r.gbp?.ok === false ? " (failed)" : ""}` +
+        `${r.gbp?.rating ? ` (${r.gbp.rating}★, ${r.gbp.review_count || 0} reviews)` : ''} · ${r.researched_at || ''}` : '');
+    const view = document.getElementById('brandProfileView');
+    if (view) view.innerHTML = renderBrandProfileHtml(b?.profile);
+    fill('brandProfileEditor', b?.profile ? JSON.stringify(b.profile, null, 2) : '');
+    set('brandProfileSource', b?.profile?.generated_by || '—');
+    const plan = b?.plan;
+    set('brandPlanSource', plan?.generated_by || '—');
+    const sum = document.getElementById('brandPlanSummary');
+    if (sum) sum.innerHTML = plan ? `<strong>Goals:</strong> ${(plan.goals || []).map(g => brandEsc(`${g.goal} (${g.kpi}: ${g.target})`)).join('; ')}<br>
+        <strong>Channel mix:</strong> ${(plan.channel_mix || []).map(m => brandEsc(`${m.platform} ${m.share_pct}%`)).join(', ')}<br>
+        <strong>Campaigns:</strong> ${(plan.campaigns || []).map(c => brandEsc(`${c.name} (days ${c.start_day}–${c.end_day})`)).join('; ')}` : 'No plan yet.';
+    const body = document.getElementById('brandPlanBody');
+    if (body) body.innerHTML = (plan?.calendar || []).map(item => '<tr>' + BRAND_PLAN_COLS.map(c =>
+        `<td data-col="${c}"${BRAND_EDITABLE.has(c) ? ' contenteditable="true"' : ''}>${brandEsc(item[c])}</td>`).join('') + '</tr>').join('');
+}
+
+// Populate the switcher and load the active profile into generation on startup.
+document.addEventListener('DOMContentLoaded', () => { setTimeout(() => { initBrandPage().catch(() => {}); }, 400); });
+window.__nexusBrand = { state: BrandUI, parseHandles, collectPlanEdits, renderBrandProfileHtml, renderBrandPage };

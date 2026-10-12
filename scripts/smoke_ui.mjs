@@ -173,7 +173,7 @@ try {
         }
 
         console.log('\n📸 Screenshots');
-        for (const page of ['dashboard', 'utm', 'analytics', 'calendar', 'trends']) {
+        for (const page of ['dashboard', 'brand', 'utm', 'analytics', 'calendar', 'trends']) {
             const file = path.join(SHOTS, `smoke-${page}.png`);
             rmSync(file, { force: true });
             // Wait for the PNG to exist AND stop growing — Chrome writes it in

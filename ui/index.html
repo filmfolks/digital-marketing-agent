@@ -45,6 +45,9 @@
                 <li class="nav-item" data-page="agent">
                     <a href="#" class="nav-link"><i class="ph ph-robot"></i><span>AI Agent</span><div class="nav-badge">AI</div></a>
                 </li>
+                <li class="nav-item" data-page="brand">
+                    <a href="#" class="nav-link"><i class="ph ph-storefront"></i><span>Brand Setup</span></a>
+                </li>
                 <li class="nav-item" data-page="create">
                     <a href="#" class="nav-link"><i class="ph ph-pen-nib"></i><span>Create Content</span></a>
                 </li>
@@ -131,6 +134,12 @@
                     <h1 class="page-heading" id="pageHeading">Dashboard</h1>
                 </div>
                 <div class="topbar-right">
+                    <div class="topbar-model-selector glass-card brand-switcher" title="Active brand — all generation uses this profile">
+                        <i class="ph ph-storefront"></i>
+                        <select id="brandSwitcher" onchange="switchBrand(this.value)" aria-label="Active brand">
+                            <option value="">No brand</option>
+                        </select>
+                    </div>
                     <div class="topbar-model-selector glass-card">
                         <i class="ph ph-cpu"></i>
                         <select id="modelSelect">
@@ -654,6 +663,78 @@
             </div>
 
             <!-- ═══ PAGE: SETTINGS ═══ -->
+            <div class="page-content" id="page-brand">
+                <div class="brand-layout fade-up">
+                    <div class="glass-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-storefront"></i> Brand Setup</h3>
+                            <span class="chip" id="brandStatusChip">No brand selected</span>
+                        </div>
+                        <p class="helper-text">Enter the business details. The relay crawls the website politely (robots.txt, same domain, capped pages), reads the Google Business Profile, then builds a Brand Profile and a 30-day plan with your AI provider chain. Every post generated afterwards uses the active brand.</p>
+                        <div class="form-row">
+                            <div class="form-field"><label>Business name *</label><input type="text" id="brandFormName" placeholder="Acme Dental Clinic"></div>
+                            <div class="form-field"><label>Website</label><input type="url" id="brandFormWebsite" placeholder="https://acmedental.in"></div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-field" style="flex:2"><label>Google Business Profile URL</label><input type="url" id="brandFormGbp" placeholder="https://maps.app.goo.gl/… or https://www.google.com/maps/place/…"></div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-field"><label>Social handles (optional)</label><input type="text" id="brandFormHandles" placeholder="instagram=@acme, x=@acme, linkedin=company/acme"></div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-field"><label>Location</label><input type="text" id="brandFormLocation" placeholder="Pune, India"></div>
+                            <div class="form-field"><label>Target market</label><input type="text" id="brandFormMarket" placeholder="Families and young professionals in Pune"></div>
+                        </div>
+                        <div class="form-row brand-actions">
+                            <button class="btn btn-primary" id="brandSaveBtn" onclick="brandCreate()"><i class="ph ph-plus"></i> Save brand</button>
+                            <button class="btn btn-ghost" id="brandResearchBtn" onclick="brandRun('research')"><i class="ph ph-magnifying-glass"></i> Research</button>
+                            <button class="btn btn-ghost" id="brandProfileBtn" onclick="brandRun('profile')"><i class="ph ph-identification-card"></i> Build profile</button>
+                            <button class="btn btn-ghost" id="brandPlanBtn" onclick="brandRun('plan')"><i class="ph ph-calendar-plus"></i> Build 30-day plan</button>
+                            <button class="btn btn-ghost" id="brandAllBtn" onclick="brandRun('all')"><i class="ph ph-lightning"></i> Do all three</button>
+                            <button class="btn btn-ghost" id="brandDeleteBtn" onclick="brandDelete()"><i class="ph ph-trash"></i> Delete brand</button>
+                        </div>
+                        <div class="helper-text" id="brandProgress"></div>
+                        <div class="helper-text" id="brandResearchSummary"></div>
+                    </div>
+
+                    <div class="glass-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-identification-card"></i> Brand Profile</h3>
+                            <span class="chip" id="brandProfileSource">—</span>
+                        </div>
+                        <div id="brandProfileView" class="brand-profile-view helper-text">No profile yet.</div>
+                        <details>
+                            <summary>Edit profile (JSON)</summary>
+                            <textarea id="brandProfileEditor" rows="16" spellcheck="false" class="mono"></textarea>
+                            <div class="form-row brand-actions">
+                                <button class="btn btn-primary" id="brandProfileSaveBtn" onclick="brandSave('profile')"><i class="ph ph-floppy-disk"></i> Save profile</button>
+                            </div>
+                        </details>
+                        <div class="form-row brand-actions">
+                            <button class="btn btn-ghost" id="brandExportMdBtn" onclick="brandExport('md')"><i class="ph ph-file-text"></i> Export Markdown</button>
+                            <button class="btn btn-ghost" id="brandExportCsvBtn" onclick="brandExport('csv')"><i class="ph ph-file-csv"></i> Export plan CSV</button>
+                        </div>
+                    </div>
+
+                    <div class="glass-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-calendar"></i> 30-day Plan</h3>
+                            <span class="chip" id="brandPlanSource">—</span>
+                        </div>
+                        <div id="brandPlanSummary" class="helper-text">No plan yet.</div>
+                        <div class="brand-table-wrap">
+                            <table class="brand-plan-table" id="brandPlanTable">
+                                <thead><tr><th>Day</th><th>Date</th><th>Channel</th><th>Format</th><th>Pillar</th><th>Idea</th><th>Hook</th><th>CTA</th><th>Status</th></tr></thead>
+                                <tbody id="brandPlanBody"></tbody>
+                            </table>
+                        </div>
+                        <div class="form-row brand-actions">
+                            <button class="btn btn-primary" id="brandPlanSaveBtn" onclick="brandSavePlanTable()"><i class="ph ph-floppy-disk"></i> Save plan edits</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div class="page-content" id="page-settings">
                 <div class="settings-layout fade-up">
                     <div class="glass-card settings-card">

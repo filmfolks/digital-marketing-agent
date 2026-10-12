@@ -384,6 +384,80 @@ await test('relay address is configurable for phone/LAN use and auto-detects /ap
     assert.match(html, /apple-mobile-web-app-capable/);
 });
 
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BRAND SETUP
+   ══════════════════════════════════════════════════════════════════════════ */
+console.log('\nBrand Setup');
+const PROFILE = {
+    business_name: 'Acme Dental', category: 'Dentist', location: 'Pune',
+    value_proposition: 'Painless family dentistry',
+    services: [{ name: 'Teeth whitening' }, { name: 'Implants' }],
+    usps: ['15 years experience'], personas: [{ name: 'Busy parents', pains: ['no time'] }],
+    brand_voice: { adjectives: ['warm', 'expert'], tone: 'friendly', emoji_policy: 'none', avoid_words: ['cheap', 'guaranteed'] },
+    content_pillars: [{ name: 'Education', share_pct: 60 }, { name: 'Proof', share_pct: 40 }],
+    hashtag_sets: { branded: ['#AcmeSmiles'], local: ['#PuneDentist'] },
+};
+
+await test('brandContextBlock summarises the profile and is empty without one', () => {
+    const { brandContextBlock } = __nexusInternals;
+    const b = brandContextBlock(PROFILE);
+    assert.match(b, /^BRAND PROFILE — Acme Dental \(Dentist, Pune\)/);
+    for (const s of ['Teeth whitening', '15 years experience', 'Busy parents', 'warm, expert', '#AcmeSmiles', 'Education'])
+        assert.ok(b.includes(s), `missing ${s}`);
+    assert.equal(brandContextBlock(null), '');
+    assert.ok(brandContextBlock(PROFILE, 50).length <= 50);
+});
+
+await test('brand avoid-words and emoji policy are merged into the guardrails', () => {
+    const { mergeBrandGuardrails } = __nexusInternals;
+    const g = mergeBrandGuardrails({ enabled: true, bannedWords: ['Free'], allowEmoji: true }, PROFILE);
+    assert.deepEqual(g.bannedWords.sort(), ['cheap', 'free', 'guaranteed']);
+    assert.equal(g.allowEmoji, false);
+    const out = applyGuardrails('Cheap whitening 😁', g);
+    assert.ok(!/cheap/i.test(out.text) && !out.text.includes('😁'), out.text);
+    assert.deepEqual(mergeBrandGuardrails({ bannedWords: ['x'] }, null), { bannedWords: ['x'] });
+});
+
+await test('active brand profile is injected into the system prompt and persisted', () => {
+    NexusAI.setBrandProfile(PROFILE);
+    assert.ok(NexusAI.buildSystemPrompt({ brand: 'Acme Dental' }).includes('BRAND PROFILE — Acme Dental'));
+    assert.ok(localStorage.getItem('nexus_active_brand_profile').includes('Acme Dental'));
+    NexusAI.setBrandProfile(null);
+    assert.ok(!NexusAI.buildSystemPrompt({ brand: 'X' }).includes('BRAND PROFILE'));
+    assert.equal(localStorage.getItem('nexus_active_brand_profile'), null);
+});
+
+await test('Brand Setup page, nav item, switcher and every referenced id exist', async () => {
+    const fs = await import('node:fs');
+    const js = fs.readFileSync(path.join(uiDir, 'script.js'), 'utf8');
+    const html = fs.readFileSync(path.join(uiDir, 'index.html'), 'utf8');
+    assert.match(html, /data-page="brand"/);
+    assert.match(html, /id="page-brand"/);
+    assert.match(js, /PAGE_TITLES\.brand = 'Brand Setup'/);
+    const brandJs = js.slice(js.indexOf('BRAND SETUP'));
+    // ids are passed through small helpers (set/fill), so collect every quoted brand* id literal.
+    const ids = [...brandJs.matchAll(/['#](brand[A-Z]\w*)['\s]/g)].map(m => m[1]);
+    assert.ok(ids.length > 10);
+    for (const id of new Set(ids)) assert.ok(html.includes(`id="${id}"`), `missing #${id}`);
+    for (const fn of [...html.matchAll(/on(?:click|change)="(brand\w+|switchBrand)\(/g)].map(m => m[1]))
+        assert.match(js, new RegExp(`function ${fn}\\(`), `missing handler ${fn}`);
+});
+
+await test('handle parsing and plan-table edits (only editable columns change)', async () => {
+    const fs = await import('node:fs');
+    const js = fs.readFileSync(path.join(uiDir, 'script.js'), 'utf8');
+    const grab = name => { const i = js.indexOf(`function ${name}(`); const j = js.indexOf('\n}\n', i); return js.slice(i, j + 2); };
+    const mod = new Function(`const BRAND_EDITABLE = new Set(['platform','format','pillar','idea','hook','cta','status']);
+        ${grab('parseHandles')} ${grab('collectPlanEdits')} return { parseHandles, collectPlanEdits };`)();
+    assert.deepEqual(mod.parseHandles('instagram=@acme, x: acme_x\nlinkedin=company/acme, junk'),
+        { instagram: 'acme', x: 'acme_x', linkedin: 'company/acme' });
+    const plan = { calendar: [{ day: 1, date: '2026-10-13', idea: 'old', platform: 'x' }] };
+    const next = mod.collectPlanEdits(plan, [{ day: '99', date: 'bad', idea: ' new idea ', platform: 'instagram' }]);
+    assert.deepEqual(next.calendar[0], { day: 1, date: '2026-10-13', idea: 'new idea', platform: 'instagram' });
+    assert.equal(plan.calendar[0].idea, 'old', 'original plan must not be mutated');
+});
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

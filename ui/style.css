@@ -454,7 +454,7 @@ body {
 .form-field label { font-size: 13px; font-weight: 600; color: var(--c-text-2); }
 .form-row { display: flex; gap: 14px; }
 
-input[type="text"], input[type="time"], input[type="date"], input[type="email"],
+input[type="text"], input[type="time"], input[type="date"], input[type="email"], input[type="url"],
 select, textarea {
     width: 100%;
     background: rgba(0,0,0,.25);
@@ -1247,3 +1247,17 @@ body {
     .glass-card { padding: 14px !important; }
     h1 { font-size: 1.35rem; }
 }
+
+/* ── Brand Setup ─────────────────────────────────────────── */
+.brand-layout { display: grid; gap: 1.25rem; }
+.brand-actions { flex-wrap: wrap; gap: .5rem; }
+.brand-switcher select { max-width: 180px; }
+.brand-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .75rem; }
+.brand-cols h4 { margin: .25rem 0; font-size: .85rem; opacity: .8; }
+.brand-cols ul { margin: 0; padding-left: 1.1rem; }
+.brand-table-wrap { overflow-x: auto; max-height: 480px; -webkit-overflow-scrolling: touch; }
+.brand-plan-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.brand-plan-table th, .brand-plan-table td { padding: .4rem .5rem; border-bottom: 1px solid rgba(255,255,255,.08); text-align: left; vertical-align: top; }
+.brand-plan-table td[contenteditable="true"]:focus { outline: 1px solid var(--accent, #7c5cff); background: rgba(124,92,255,.08); }
+#brandProfileEditor { width: 100%; font-family: ui-monospace, monospace; font-size: .8rem; }
+@media (max-width: 640px) { .brand-switcher { display: none; } }
