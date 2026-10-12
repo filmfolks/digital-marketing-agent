@@ -386,6 +386,20 @@ curl -s -X POST -H 'Content-Type: application/json' -H 'X-Nexus-Token: mysecret'
 
 ---
 
+## 🏷️ Brand Setup (multi-brand)
+
+The **Brand Setup** page (and `agent/brand_research.py`) turns a business name, website and Google Business Profile URL into:
+
+- **Research:** a polite crawl of the website (robots.txt obeyed including crawl-delay, same domain only, `NEXUS_CRAWL_MAX_PAGES` cap; plain HTTP first, Playwright only for JS-only pages). Google Business Profile data comes from the Places API when `GOOGLE_PLACES_API_KEY` is set, otherwise from the public Maps listing in the browser.
+- **Brand Profile** (`data/brands/<id>/profile.json`): services, USPs, personas, voice (do/don't, avoid-words, emoji policy), content pillars, hashtags, local SEO keywords. It is built by the configured AI provider chain, with a heuristic fallback that is labelled as such.
+- **30-day plan** (`plan.json`): goals/KPIs, channel mix, cadence, a day-by-day calendar and campaigns.
+
+Both are editable in the UI and export to Markdown/CSV. The **active brand** (top-bar switcher) is injected into every generation, in the dashboard and in `generate_content.py`, along with its guardrails (avoid-words → `[removed]`, emoji policy). Use `--brand-id` to pick a brand or `--no-brand-profile` to disable it. Relay endpoint: `POST /brand` with `action` = list | create | get | activate | delete | research | profile | plan | save | export.
+
+CLI: `python agent/brand_research.py create --name "Acme" --website https://acme.in --gbp <maps url>`, then `python agent/brand_research.py run --brand acme`.
+
+A future prospecting agent is designed (not built) in [docs/LEAD_GEN_DESIGN.md](docs/LEAD_GEN_DESIGN.md).
+
 ## 🔁 API first, browser fallback
 
 `agent/publish.py` (and so the relay's `/publish`, the UI, and the phone) always tries the official API first:

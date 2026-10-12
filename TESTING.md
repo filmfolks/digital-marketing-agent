@@ -102,6 +102,24 @@ NEXUS_TLS_CERT=certs/nexus.pem NEXUS_TLS_KEY=certs/nexus-key.pem ./start.sh --la
 On the phone (same Wi-Fi), open `https://<mac-ip>:8712/app/`. In Settings → Local Relay, paste the token and press *Save & test relay*, then *Share → Add to Home Screen*. The phone also has to trust the mkcert root CA: AirDrop `$(mkcert -CAROOT)/rootCA.pem` to it and enable it under Settings → General → About → Certificate Trust Settings.
 Posts you publish from the phone run on the Mac: API first, then the browser fallback.
 
+## 8. Brand Setup (research → profile → 30-day plan)
+
+1. Open the dashboard → **Brand Setup**. Enter your business name, website, Google Business Profile URL
+   (a `maps.app.goo.gl` share link works), optional handles (`instagram=@you, x=@you`), location and target market. Click **Save brand**.
+   The brand appears in the top-bar switcher.
+2. Click **Do all three** (or Research → Build profile → Build 30-day plan). Expect 1–5 minutes.
+   - The research line shows how many pages were crawled and whether Google data came from `places_api`
+     (when `GOOGLE_PLACES_API_KEY` is set) or `browser`.
+   - The profile chip shows `generated_by`. If it says `heuristic (AI unavailable: …)`, your AI key or provider is not working. Fix it in Settings and rebuild.
+   - CLI equivalent: `python agent/brand_research.py create --name "…" --website …` then `python agent/brand_research.py run --brand <id>`.
+3. Check the profile against reality: the services, USPs and prices must all appear on your site or Google profile. Nothing should be invented.
+4. Edit something in the JSON editor (for example add a word to `brand_voice.avoid_words`) → **Save profile**. Edit a calendar cell → **Save plan edits**. Reload the page. Both edits persist.
+5. **Export Markdown** and **Export plan CSV**. Open the CSV in Sheets/Excel: there should be about 30 days of rows with no `=` formulas executed.
+6. Go to **Create Content** and generate a post. It should use your services and voice, and any avoid-word is replaced with `[removed]`.
+   CLI: `python skill/digital-marketer/scripts/generate_content.py --topic "…" --platforms instagram` uses the active brand (use `--no-brand-profile` to compare).
+7. Add a second brand and switch between them in the top bar. Generation follows the selected brand.
+8. **Delete brand** removes `data/brands/<id>/` and the switcher falls back to the remaining brand.
+
 ## Troubleshooting
 | Symptom | Fix |
 |---|---|
