@@ -23,7 +23,7 @@ fi
 [ -d .venv ] || "$PY" -m venv .venv
 .venv/bin/python -m pip install --upgrade "pip>=24,<26" --disable-pip-version-check -q
 .venv/bin/python -m pip install --only-binary=:all: -r requirements-posting.txt
-if [ "${1:-}" = "--with-ai" ]; then
+if [ "${1:-}" = "--with-ai" ] || [ "${2:-}" = "--with-ai" ]; then
   .venv/bin/python -m pip install --only-binary=:all: -r requirements.txt || \
     echo "WARN: optional AI SDKs failed to install; posting still works."
 fi

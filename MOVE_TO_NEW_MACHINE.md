@@ -23,8 +23,8 @@ unzip nexus-portable-*.zip -d ~/Documents/Agents/ && cd ~/Documents/Agents/digit
 cp /secure/place/.env .env                   # or edit the .env that was created from .env.example
 ./start.sh --check && ./start.sh             # relay + scheduler on http://127.0.0.1:8712/app/
 ```
-Log in to the social accounts again:
-`.venv/bin/python agent/social_browser_agent.py login --platform x` (and `instagram`, `facebook`).
+Log in to the social accounts again. Browser sessions don't move between machines: open the app's
+browser/accounts page, or run `.venv/bin/python agent/social_browser_agent.py --headed status`, and log in by hand.
 
 ## LM Studio + Hermes (M1 Max)
 1. Install LM Studio and download a Hermes model. With an M1 Max you can run Hermes 3 8B or a
