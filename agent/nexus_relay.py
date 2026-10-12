@@ -176,7 +176,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/tools":
             if not self._token_ok():
                 return self._error(401, "Invalid or missing X-Nexus-Token")
-            return self._reply(200, {"ok": True, "endpoints": list(CMD_MAP) + ["publish", "publish-due", "mcp", "queue", "health"]})
+            return self._reply(200, {"ok": True, "endpoints": list(CMD_MAP) + ["publish", "publish-due", "mcp", "queue", "health", "brand", "social"]})
         if path == "/" or path == "/app":
             self.send_response(302)
             self.send_header("Location", "/app/")
@@ -244,6 +244,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._mcp(body)
         if path == "/social":
             return self._social(body)
+        if path == "/brand":
+            return self._brand(body)
         if path == "/shutdown":
             print("[relay] shutdown requested by the UI")
             self._reply(200, {"ok": True, "stopping": True})
@@ -474,6 +476,59 @@ class Handler(BaseHTTPRequestHandler):
         return self._reply(200, {"ok": True, "workflow": workflow, "cmd": " ".join(args), "exit": 0,
                                  "stdout": proc.stdout, "stderr": proc.stderr[-500:]})
 
+    def _brand(self, body: dict):
+        """Brand Setup: create/list/switch brands, research, profile, plan, edit, export."""
+        br = brand_module()
+        store = br.BrandStore()
+        action = body.get("action", "list")
+        bid = body.get("brand_id") or store.active()
+        try:
+            if action == "list":
+                return self._reply(200, {"ok": True, "active": store.active(), "brands": store.list()})
+            if action == "create":
+                brand = store.create(body.get("brand") or {})
+                if body.get("activate"):
+                    store.set_active(brand["id"])
+                return self._reply(200, {"ok": True, "brand": brand, "active": store.active()})
+            if not bid:
+                return self._error(400, "no brand selected — create one first")
+            if action == "get":
+                return self._reply(200, {"ok": True, "brand_id": bid, **store.bundle(bid)})
+            if action == "activate":
+                store.set_active(bid)
+                return self._reply(200, {"ok": True, "active": bid})
+            if action == "delete":
+                store.delete(bid)
+                return self._reply(200, {"ok": True, "active": store.active(), "brands": store.list()})
+            if action == "research":
+                research = br.run_research(store, bid, max_pages=int(body.get("max_pages") or br.MAX_PAGES),
+                                           render=br.playwright_render if body.get("render", True) else None)
+                out = {"ok": True, "brand_id": bid, "research": research}
+                if body.get("then") in ("profile", "plan"):
+                    out["profile"] = br.run_profile(store, bid)
+                    if body.get("then") == "plan":
+                        out["plan"] = br.run_plan(store, bid)
+                return self._reply(200, out)
+            if action == "profile":
+                return self._reply(200, {"ok": True, "brand_id": bid, "profile": br.run_profile(store, bid)})
+            if action == "plan":
+                return self._reply(200, {"ok": True, "brand_id": bid, "plan": br.run_plan(store, bid)})
+            if action == "save":
+                part = body.get("part")
+                return self._reply(200, {"ok": True, "brand_id": bid,
+                                         part or "data": br.save_edited(store, bid, part, body.get("data"))})
+            if action == "export":
+                b = store.bundle(bid)
+                fmt = body.get("format", "md")
+                if fmt == "csv":
+                    return self._reply(200, {"ok": True, "filename": f"{bid}-plan.csv",
+                                             "mime": "text/csv", "content": br.plan_to_csv(b["plan"] or {})})
+                return self._reply(200, {"ok": True, "filename": f"{bid}-brand-plan.md", "mime": "text/markdown",
+                                         "content": br.to_markdown(b["profile"], b["plan"])})
+            return self._error(400, f"unknown brand action: {action}")
+        except ValueError as e:
+            return self._error(400, str(e))
+
     def _run_python(self, args: list, timeout: int = 300):
         """Run a skill and return (payload, http_status).
 
@@ -606,6 +661,21 @@ def queue_payload() -> dict:
         counts[j.get("status", "unknown")] = counts.get(j.get("status", "unknown"), 0) + 1
     safe = [{k: v for k, v in j.items() if k != "credentials"} for j in jobs[-60:]]
     return {"ok": True, "count": len(jobs), "counts": counts, "jobs": safe}
+
+
+_BRAND_MODULE = None
+
+
+def brand_module():
+    """Import agent/brand_research.py lazily (keeps relay start-up stdlib-fast)."""
+    global _BRAND_MODULE
+    if _BRAND_MODULE is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("nexus_brand_research", AGENT_DIR / "brand_research.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)                         # type: ignore[union-attr]
+        _BRAND_MODULE = mod
+    return _BRAND_MODULE
 
 
 def load_env(paths=None) -> None:
@@ -747,7 +817,7 @@ def main() -> int:
 
     scheme = "https" if srv.tls else "http"   # type: ignore[attr-defined]
     print(f"🛠  Nexus relay v{VERSION} on {scheme}://{args.bind}:{args.port}")
-    print("    endpoints: /health /queue /browser /publish /publish-due /social /mcp  ·  UI at /app/")
+    print("    endpoints: /health /queue /browser /publish /publish-due /social /brand /mcp  ·  UI at /app/")
     if args.token:
         print("    auth: X-Nexus-Token required ✔")
     else:

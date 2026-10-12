@@ -292,6 +292,73 @@ class RelayServerCase(unittest.TestCase):
         self.assertIn("content", body)
 
 
+class BrandEndpoint(RelayServerCase):
+    """/brand over HTTP with research + AI mocked inside the relay process."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.br = relay.brand_module()
+        cls._bdir = tempfile.TemporaryDirectory()
+        cls._saved = (cls.br.BRANDS_DIR, cls.br.run_research, cls.br.default_llm)
+        cls.br.BRANDS_DIR = Path(cls._bdir.name)
+
+        def fake_research(store, bid, **kw):
+            r = {"brand_id": bid, "site_summary": {"service_candidates": ["Teeth whitening"],
+                                                   "meta_description": "Dentist"}, "gbp": {"review_themes": []}}
+            store.write(bid, "research", r)
+            return r
+        cls.br.run_research = fake_research
+        cls.br.default_llm = lambda s, u, **k: (_ for _ in ()).throw(RuntimeError("no AI in tests"))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.br.BRANDS_DIR, cls.br.run_research, cls.br.default_llm = cls._saved
+        cls._bdir.cleanup()
+        super().tearDownClass()
+
+    def brand(self, **body):
+        return self.request("POST", "/brand", body=body, token=TOKEN)
+
+    def test_brand_flow_end_to_end(self):
+        code, body = self.brand(action="create", brand={"business_name": "Acme Dental", "website": "acme.example",
+                                                        "location": "Pune"})
+        self.assertEqual(code, 200, body)
+        bid = body["brand"]["id"]
+        code, body = self.brand(action="research", brand_id=bid, then="plan")
+        self.assertEqual(code, 200, body)
+        self.assertTrue(body["profile"]["generated_by"].startswith("heuristic"))
+        self.assertEqual(len({c["day"] for c in body["plan"]["calendar"]}) >= 20, True)
+        code, body = self.brand(action="export", brand_id=bid, format="csv")
+        self.assertTrue(body["content"].startswith("day,date,platform"))
+        code, body = self.brand(action="export", brand_id=bid, format="md")
+        self.assertIn("30-day Marketing Plan", body["content"])
+        code, body = self.brand(action="get", brand_id=bid)
+        prof = body["profile"]
+        prof["value_proposition"] = "Edited by owner"
+        code, body = self.brand(action="save", brand_id=bid, part="profile", data=prof)
+        self.assertEqual(body["profile"]["value_proposition"], "Edited by owner")
+
+    def test_multi_brand_switch(self):
+        self.brand(action="create", brand={"business_name": "Brand One"})
+        code, body = self.brand(action="create", brand={"business_name": "Brand Two"}, activate=True)
+        self.assertEqual(body["active"], "brand-two")
+        code, body = self.brand(action="activate", brand_id="brand-one")
+        self.assertEqual(body["active"], "brand-one")
+        code, body = self.brand(action="list")
+        self.assertTrue({"brand-one", "brand-two"} <= {b["id"] for b in body["brands"]})
+
+    def test_brand_requires_token_and_validates(self):
+        code, _ = self.request("POST", "/brand", body={"action": "list"})
+        self.assertEqual(code, 401)
+        code, body = self.brand(action="create", brand={"business_name": ""})
+        self.assertEqual(code, 400)
+        code, body = self.brand(action="get", brand_id="../../etc")
+        self.assertEqual(code, 400)
+        code, body = self.brand(action="nope", brand_id="brand-one")
+        self.assertEqual(code, 400)
+
+
 class LanRelayCase(RelayServerCase):
     """LAN mode: any Host, same-origin PWA allowed, token mandatory everywhere it matters."""
 
