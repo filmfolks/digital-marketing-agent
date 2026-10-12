@@ -196,6 +196,50 @@ Platform Formulas:
 
 Always output clean, copy-paste-ready Markdown."""
 
+# Set from the active Brand Profile (agent/brand_research.py) in main().
+BRAND_CONTEXT = ""
+BRAND_GUARDRAILS = {}
+
+
+def load_brand_profile(brand_id=None):
+    """Return the Brand Profile for brand_id (or the active brand), or None."""
+    try:
+        import importlib.util
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        spec = importlib.util.spec_from_file_location("nexus_brand_research_gc",
+                                                      os.path.join(root, "agent", "brand_research.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        store = mod.BrandStore()
+        bid = brand_id or store.active()
+        prof = store.read(bid, "profile") if bid else None
+        return (prof, mod.brand_context(prof), mod.brand_guardrails(prof)) if prof else None
+    except Exception:
+        return None
+
+
+def brand_block():
+    if not BRAND_CONTEXT:
+        return ""
+    return ("\n\n" + BRAND_CONTEXT + "\nStay strictly on-brand: use only the services, USPs and voice above; "
+            "never invent prices, awards or statistics.")
+
+
+def apply_brand_guardrails(text, g=None):
+    """Mirror of ui/ai-client.js applyGuardrails for the brand's avoid-words / emoji policy."""
+    g = BRAND_GUARDRAILS if g is None else g
+    if not g or not text:
+        return text
+    import re as _re
+    for w in g.get("bannedWords") or []:
+        w = str(w).strip()
+        if w:
+            text = _re.sub(r"\b" + _re.escape(w) + r"\b", "[removed]", text, flags=_re.I)
+    if g.get("allowEmoji") is False:
+        text = _re.sub("[\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F]", "", text)
+    return text
+
+
 def generate_for_platform(topic, platform, tone, brand, provider_key, model_name=None, custom_url=None):
     """Generate content for a single platform using chosen AI harness."""
     cfg = PROVIDERS.get(provider_key, PROVIDERS["lmstudio"])
@@ -225,7 +269,7 @@ Include:
 2. Strategic Hashtags (if applicable)
 3. Direct Call-To-Action (Engagement + Conversion)
 4. Visual Direction Brief (composition, text overlay, mood)
-"""
+""" + brand_block()
 
     headers = {
         "Content-Type": "application/json"
@@ -272,7 +316,7 @@ def generate_claude(topic, platform, tone, brand, api_key, model):
         "max_tokens": 1000,
         "system": SYSTEM_PROMPT,
         "messages": [
-            {"role": "user", "content": f"Brand: {brand}\nTopic: {topic}\nPlatform: {platform}\nTone: {tone}\n\nGenerate ready-to-post {platform} content."}
+            {"role": "user", "content": f"Brand: {brand}\nTopic: {topic}\nPlatform: {platform}\nTone: {tone}\n\nGenerate ready-to-post {platform} content." + brand_block()}
         ]
     }
     status, resp = http_post_json(url, payload, headers, timeout=60)
@@ -329,7 +373,17 @@ def main():
                         help="Machine-readable output on stdout (used by the MCP server / relay)")
     parser.add_argument("--no-save", action="store_true",
                         help="Do not write a markdown file into output/")
+    parser.add_argument("--brand-id", default=None, help="Brand Setup id (default: the active brand)")
+    parser.add_argument("--no-brand-profile", action="store_true", help="Ignore the saved Brand Profile")
     args = parser.parse_args()
+
+    global BRAND_CONTEXT, BRAND_GUARDRAILS
+    if not args.no_brand_profile:
+        loaded = load_brand_profile(args.brand_id)
+        if loaded:
+            prof, BRAND_CONTEXT, BRAND_GUARDRAILS = loaded
+            if not args.brand:
+                args.brand = prof.get("business_name", "")
 
     # Determine provider
     provider = args.provider
@@ -411,7 +465,7 @@ def main():
                 model_name=args.model,
                 custom_url=args.url
             )
-            content_dict[p] = content
+            content_dict[p] = apply_brand_guardrails(content)
             say(f"   ✅ {p} finished.\n")
         except GenerationError as e:
             failures.append({"platform": p, "error": str(e)})

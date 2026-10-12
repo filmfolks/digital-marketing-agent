@@ -88,5 +88,35 @@ class TestOutputNaming(unittest.TestCase):
         self.assertIn("%H%M%S", source)
 
 
+class TestBrandProfileIsFedIntoPrompts(unittest.TestCase):
+    def setUp(self):
+        self.saved = (expected.BRAND_CONTEXT, expected.BRAND_GUARDRAILS, expected.http_post_json)
+
+    def tearDown(self):
+        expected.BRAND_CONTEXT, expected.BRAND_GUARDRAILS, expected.http_post_json = self.saved
+
+    def test_brand_context_reaches_the_model(self):
+        sent = {}
+
+        def fake_post(url, payload, headers=None, timeout=60):
+            sent["payload"] = payload
+            return 200, {"choices": [{"message": {"content": "ok"}}]}
+        expected.http_post_json = fake_post
+        expected.BRAND_CONTEXT = "BRAND PROFILE — Acme Dental\nProven USPs (only claim these): 15 years"
+        expected.generate_for_platform("smile tips", "instagram", "professional", "Acme", "lmstudio")
+        user = sent["payload"]["messages"][1]["content"]
+        self.assertIn("BRAND PROFILE — Acme Dental", user)
+        self.assertIn("Stay strictly on-brand", user)
+
+    def test_no_profile_means_no_block(self):
+        expected.BRAND_CONTEXT = ""
+        self.assertEqual(expected.brand_block(), "")
+
+    def test_brand_guardrails_remove_avoid_words_and_emoji(self):
+        out = expected.apply_brand_guardrails("Cheap whitening 😁 today", {"bannedWords": ["cheap"], "allowEmoji": False})
+        self.assertEqual(out.strip(), "[removed] whitening  today".strip())
+        self.assertEqual(expected.apply_brand_guardrails("x", {}), "x")
+
+
 if __name__ == "__main__":
     unittest.main()
