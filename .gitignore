@@ -10,6 +10,8 @@
 .DS_Store
 **/.DS_Store
 Thumbs.db
+# macOS AppleDouble files (created when copying to non-HFS volumes / zips)
+._*
 *.swp
 *~
 

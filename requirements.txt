@@ -1,14 +1,20 @@
 # Digital Marketing Agent Dependencies
+# Upper bounds stop a future major release from breaking a fresh install.
+# Verified 2026-10-12 with: openai 2.54, litellm 1.105, pydantic 2.14, google-genai 2.29,
+# playwright 1.63, pillow 12.3, requests 2.34, python-dotenv 1.2.
 # Compatible with local models (LM Studio, Ollama, Hermes) and Cloud APIs
 
-openai>=1.20.0
-litellm>=1.40.0
-requests>=2.31.0
-python-dotenv>=1.0.0
-pydantic>=2.0.0
-google-genai>=0.1.0; python_version >= '3.10'
+openai>=1.20.0,<3
+litellm>=1.40.0,<2
+requests>=2.31.0,<3
+python-dotenv>=1.0.0,<2
+pydantic>=2.0.0,<3
+google-genai>=0.1.0,<3; python_version >= '3.10'
 
 # Browser Automation & Chrome DevTools Fallback (Headless/Headed Human-Like Posting)
-playwright>=1.40.0
-playwright-stealth>=1.0.6
-pillow>=10.0.0
+playwright>=1.40.0,<2
+# NOTE: social_browser_agent.py imports the 1.x API (stealth_sync), which 2.x removed
+# (and 1.x needs setuptools/pkg_resources). On current installs stealth is therefore
+# silently OFF. Left as an owner decision -- see REVIEW (platform ToS).
+playwright-stealth>=1.0.6,<3
+pillow>=10.0.0,<13
