@@ -1,4 +1,13 @@
 .DS_Store
 *.log
+logs/
+output/
 .env
+__pycache__/
+*.pyc
+*.pyo
+node_modules/
+.venv/
+venv/
+credentials.js
 ui/credentials.js

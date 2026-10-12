@@ -1,145 +1,175 @@
-# Digital Marketing Agent — Installation & Setup Guide
+# 🚀 Digital Marketing Agent (Nexus Command Center)
 
-## Quick Install (Copy to Any Device)
+An enterprise-grade, multi-harness **Autonomous Digital Marketing & Social Media AI Agent**. Designed to run seamlessly across **Google Antigravity**, **Local LLMs (Hermes 3, Llama 3, Mistral via LM Studio or Ollama)**, and **Cloud Subscriptions (Gemini, Groq, Claude, DeepSeek, OpenAI)**.
 
-### Step 1: Copy the Skill
-Copy the entire `digital-marketer` folder to the Antigravity skills directory:
+---
+
+## 🌟 Supported AI Harnesses
+
+| Harness | Best For | Typical Models | Hardware / Requirements |
+|---|---|---|---|
+| **Google Antigravity** | Autonomous multi-step workflows, image generation, cron scheduling | Gemini 2.0 / Gemini 1.5 Pro | Antigravity IDE / CLI |
+| **Hermes 3 (Local)** | 100% private, zero-cost, high-converting copywriting | `Hermes-3-Llama-3.1-8B` | 8GB+ RAM (LM Studio or Ollama) |
+| **LM Studio (Local)** | Easy visual model management & local OpenAI endpoint | `Mistral-7B`, `Llama-3-8B`, `Phi-3` | Local Server on `localhost:1234` |
+| **Ollama (Local)** | Command-line local model execution | `hermes3:8b`, `llama3.1:8b` | Ollama on `localhost:11434` |
+| **Cloud APIs** | Ultra-fast inference & massive context windows | Gemini, Groq, Claude, DeepSeek | API Key in UI or `.env` |
+
+---
+
+## ⚡ Quick Start
+
+### 1. Running the Nexus Web UI
+
+Open directly in your browser or serve locally:
+
+```bash
+# Option A: Open directly in your browser
+open ui/index.html
+
+# Option B: Run via local HTTP server
+cd ui
+python3 -m http.server 8080
+# Navigate to: http://localhost:8080
+```
+
+Inside the UI:
+1. Select your AI Harness from the top-right header or **Settings**:
+   - **Google Antigravity**: Formulates prompt directives and skill invocations.
+   - **Local Models**: Connects to LM Studio (`http://localhost:1234/v1`) or Ollama (`http://localhost:11434/v1`).
+   - **Cloud APIs**: Direct connection to Gemini, Groq, Claude, DeepSeek, or OpenAI.
+2. Click **Test Connection** to verify your provider before generating.
+3. Enter your topic, select platforms (Instagram, Facebook, YouTube, LinkedIn, Twitter, Blog), and click **Generate Content**.
+
+---
+
+### 2. Using with Google Antigravity (Agentic Mode)
+
+Install the skill into your Antigravity environment:
 
 ```bash
 # macOS / Linux
-cp -r /path/to/digital-marketing-agent/skill/digital-marketer ~/.gemini/config/skills/
+cp -r skill/digital-marketer ~/.gemini/config/skills/
 
 # Windows (PowerShell)
 Copy-Item -Recurse .\skill\digital-marketer $env:USERPROFILE\.gemini\config\skills\
 ```
 
-### Step 2: Verify Installation
-Open Antigravity and check that the skill is recognized. Type:
+In Antigravity chat, trigger your agent:
 ```
-Tell me about your digital marketing skills
-```
-The agent should respond with its full marketing toolkit.
-
----
-
-## Running the UI
-
-### Option A: Open Directly (No server needed)
-```bash
-open /path/to/digital-marketing-agent/ui/index.html
-# or double-click index.html in Finder
+Tell me about your digital marketing skills.
+Activate digital-marketer skill and generate today's content based on campaign.json.
 ```
 
-### Option B: Serve Locally (Better for PWA features)
-```bash
-# If you have Python:
-cd /path/to/digital-marketing-agent/ui
-python3 -m http.server 8080
-# Then open: http://localhost:8080
+#### Scheduled Autonomous Runs via Antigravity:
+```
+# Daily morning content run (9 AM)
+/schedule CronExpression="0 9 * * *" Prompt="Activate digital-marketer skill. Check campaign.json and generate today's social media content."
 
-# If you have Node.js:
-npx serve .
+# Weekly content calendar planning (Monday 8 AM)
+/schedule CronExpression="0 8 * * 1" Prompt="Activate digital-marketer skill. Generate a 7-day multi-platform content calendar."
 ```
 
 ---
 
-## LM Studio Setup (8GB RAM Local Mode)
+### 3. Using Local Models (Hermes 3, LM Studio & Ollama)
 
-### Step 1: Install LM Studio
-Download from: https://lmstudio.ai
+#### Option A: LM Studio (Recommended for 8GB RAM Mac / PC)
+1. Download [LM Studio](https://lmstudio.ai).
+2. Download a recommended 8GB-friendly model (Q4_K_M quantization):
+   - **`NousResearch/Hermes-3-Llama-3.1-8B-GGUF`** (Best instruction following & copywriting)
+   - **`mistral-7b-instruct-v0.3.Q4_K_M.gguf`** (Fast & reliable)
+   - **`Phi-3-mini-4k-instruct.Q4_K_M.gguf`** (Ultra-lightweight ~2.2 GB)
+3. In LM Studio, click **Local Server** → Load Model → **Start Server** (`http://localhost:1234/v1`).
+4. Generate via Python CLI:
+   ```bash
+   python3 skill/digital-marketer/scripts/generate_content.py \
+     --provider lmstudio \
+     --topic "5 AI marketing automations for solopreneurs" \
+     --platforms instagram linkedin
+   ```
 
-### Step 2: Download a Model
-Recommended for 8GB RAM (Q4_K_M quantization):
-- **mistral-7b-instruct-v0.3.Q4_K_M** (~4.1 GB) — Best all-around
-- **Meta-Llama-3-8B-Instruct.Q4_K_M** (~4.7 GB) — Strong reasoning
-- **Phi-3-mini-4k-instruct.Q4_K_M** (~2.2 GB) — Fastest, fits easily
+#### Option B: Ollama
+1. Pull Hermes 3 or Llama 3:
+   ```bash
+   ollama run hermes3:8b
+   ```
+2. Generate via Python CLI:
+   ```bash
+   python3 skill/digital-marketer/scripts/generate_content.py \
+     --provider ollama \
+     --model hermes3:8b \
+     --topic "Product launch teaser"
+   ```
 
-### Step 3: Start the Local Server
-In LM Studio: Click "Local Server" → Load your model → Click "Start Server"
-Default URL: `http://localhost:1234/v1`
+---
 
-### Step 4: Install Python Dependencies
+### 4. Automated Daily Cron Runs (macOS / Linux)
+
+Automate daily marketing runs at 9:00 AM:
+
 ```bash
-pip install openai
-```
-
-### Step 5: Run the Content Generator
-```bash
-cd /path/to/digital-marketing-agent/skill/digital-marketer/scripts
-
-python3 generate_content.py \
-  --topic "5 tips to grow your Instagram" \
-  --platforms instagram facebook \
-  --tone professional \
-  --brand "My Brand"
-```
-
-### Step 6: Set Up Daily Automation (macOS/Linux)
-```bash
-# Make the script executable
-chmod +x /path/to/digital-marketing-agent/skill/digital-marketer/scripts/daily_run.sh
+# Make scripts executable
+chmod +x skill/digital-marketer/scripts/daily_run.sh
+chmod +x skill/digital-marketer/scripts/lm_studio_run.sh
 
 # Open crontab
 crontab -e
 
-# Add this line (runs every day at 9 AM):
+# Add this line:
 0 9 * * * /path/to/digital-marketing-agent/skill/digital-marketer/scripts/daily_run.sh
 ```
 
----
-
-## Antigravity Automation Setup
-
-### Daily Post Generation
-Open Antigravity chat and type:
-```
-/schedule CronExpression="0 9 * * *" Prompt="Activate the digital-marketer skill. Check campaign.json in my Documents/Agents/digital-marketing-agent folder and generate today's social media content."
-```
-
-### Weekly Content Calendar
-```
-/schedule CronExpression="0 8 * * 1" Prompt="Activate the digital-marketer skill. Generate a 7-day content calendar for the current campaign."
-```
-
-### Monthly Analytics Report
-```
-/schedule CronExpression="0 8 1 * *" Prompt="Activate the digital-marketer skill. Generate a monthly performance report with recommendations."
-```
+Every generated package is automatically timestamped and saved into `output/`.
 
 ---
 
-## Project Structure
+## 📁 Project Architecture
 
 ```
 digital-marketing-agent/
-├── campaign.json               ← Edit your daily campaign settings here
+├── .env.example                ← Environment & API key templates
+├── .gitignore                  ← Protects credentials and local logs
+├── requirements.txt            ← Python dependencies (optional LiteLLM / SDKs)
+├── campaign.json               ← Daily campaign goals & target audience settings
+├── output/                     ← Timestamped generated markdown content
+├── logs/                       ← Daily automated execution logs
 ├── ui/
-│   ├── index.html              ← Open this in your browser
-│   ├── style.css
-│   └── script.js
-├── skill/
-│   └── digital-marketer/
-│       ├── SKILL.md            ← Core agent instructions (copy to ~/.gemini/config/skills/)
-│       ├── references/
-│       │   ├── copywriting_swipe_file.md
-│       │   ├── platform_best_practices.md
-│       │   └── hashtag_categories.md
-│       ├── examples/
-│       │   └── sample_campaign.md
-│       └── scripts/
-│           ├── generate_content.py    ← LM Studio content generator
-│           └── daily_run.sh           ← Cron automation script
-└── output/                     ← Generated content saved here
+│   ├── index.html              ← Nexus Marketing Command Center
+│   ├── ai-client.js            ← Unified multi-harness browser AI client
+│   ├── script.js               ← Persistent application logic & hub tools
+│   ├── style.css               ← Glassmorphism interface styles
+│   └── credentials.js          ← Safe local credential placeholders
+└── skill/
+    └── digital-marketer/
+        ├── SKILL.md            ← Core Antigravity agent instructions
+        ├── references/
+        │   ├── copywriting_swipe_file.md  ← 50+ hooks, formulas & CTAs
+        │   ├── platform_best_practices.md ← Algorithmic growth rules
+        │   └── hashtag_categories.md      ← Niche hashtag banks by industry
+        ├── examples/
+        │   └── sample_campaign.md         ← Complete 5-day product launch
+        └── scripts/
+            ├── generate_content.py        ← Universal Python AI generator
+            ├── daily_run.sh               ← Multi-provider automation runner
+            └── lm_studio_run.sh           ← Local model cron runner
 ```
 
 ---
 
-## Troubleshooting
+## 🔒 Security & Privacy Notice
 
-| Problem | Solution |
+- All API keys and social media tokens entered in the UI are stored **strictly in your local browser (`localStorage`)**.
+- No credentials are ever transmitted to third-party tracking servers.
+- When running locally via LM Studio or Ollama, **100% of your data remains on your machine**.
+
+---
+
+## 🛠️ Troubleshooting
+
+| Issue | Resolution |
 |---|---|
-| LM Studio not connecting | Make sure "Local Server" is started in LM Studio |
-| Low RAM issues | Use Q2_K or Q4_0 quantization instead of Q4_K_M |
-| Skill not recognized | Check path: `~/.gemini/config/skills/digital-marketer/SKILL.md` |
-| UI not loading | Open in Chrome/Firefox; Safari may block local file JS |
-| Cron not running | Check logs: `~/Documents/Agents/digital-marketing-agent/logs/` |
+| **LM Studio connection fails** | Ensure LM Studio has a model loaded and the "Local Server" toggle is green on port `1234`. |
+| **Ollama connection fails** | Run `ollama serve` or check `http://localhost:11434/api/tags` in your browser. |
+| **8GB RAM Out of Memory** | Use `Q4_K_M` or `Q4_0` quantizations. Lower context length to 4096 tokens in LM Studio settings. |
+| **Skill not detected in Antigravity** | Verify directory exists at `~/.gemini/config/skills/digital-marketer/SKILL.md`. |
+| **UI styles or scripts blocked** | If using Safari with local files, open via `python3 -m http.server 8080` in the `ui` folder. |

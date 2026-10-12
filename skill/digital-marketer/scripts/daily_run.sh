@@ -7,7 +7,7 @@
 # SETUP:
 #   chmod +x daily_run.sh
 #   Add to cron: crontab -e
-#   Add line: 0 9 * * * /Users/apple/Documents/Agents/digital-marketing-agent/skill/digital-marketer/scripts/daily_run.sh
+#   Add line: 0 9 * * * /path/to/digital-marketing-agent/skill/digital-marketer/scripts/daily_run.sh
 #
 # This runs every day at 9 AM, generates content, and saves to output folder.
 
@@ -61,13 +61,15 @@ echo "📱 Platforms: $PLATFORMS" | tee -a "$LOGFILE"
 
 # ── Run content generator ──────────────────────────────────────
 echo "" | tee -a "$LOGFILE"
-echo "⚙️  Running content generator..." | tee -a "$LOGFILE"
+echo "⚙️  Running universal content generator..." | tee -a "$LOGFILE"
 
 python3 "$SCRIPT_DIR/generate_content.py" \
+    --provider auto \
     --topic "$TOPIC" \
     --platforms $PLATFORMS \
     --tone "$TONE" \
-    --brand "$BRAND" 2>&1 | tee -a "$LOGFILE"
+    --brand "$BRAND" \
+    --campaign-file "$CAMPAIGN_FILE" 2>&1 | tee -a "$LOGFILE"
 
 echo "" | tee -a "$LOGFILE"
 echo "✅ Daily run complete. Check $OUTPUT_DIR for today's content." | tee -a "$LOGFILE"

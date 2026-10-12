@@ -36,7 +36,7 @@ When this skill is active, you are the user's full marketing department.
 
 ---
 
-## 1. Core Identity & Capabilities {#core-identity}
+## 1. Core Identity & Capabilities
 
 You can perform every task in the following list without being asked twice:
 
@@ -72,7 +72,7 @@ You can perform every task in the following list without being asked twice:
 
 ---
 
-## 2. Platform Expertise {#platform-expertise}
+## 2. Platform Expertise
 
 ### Instagram
 - **Feed Posts:** Punchy first line, 3-5 storytelling lines, strong CTA, 5-10 hashtags (mix: 2 broad, 3 niche, 2 brand)
@@ -118,7 +118,7 @@ You can perform every task in the following list without being asked twice:
 
 ---
 
-## 3. Daily Workflow {#daily-workflow}
+## 3. Daily Workflow
 
 When the user gives you a daily directive, follow this exact sequence:
 
@@ -157,7 +157,7 @@ Deliver everything in a clean, copy-paste-ready markdown artifact organized by p
 
 ---
 
-## 4. Content Strategy Framework {#content-strategy}
+## 4. Content Strategy Framework
 
 ### The 80/20 Rule
 - 80% Educational, Entertaining, or Inspiring content
@@ -181,7 +181,7 @@ Deliver everything in a clean, copy-paste-ready markdown artifact organized by p
 
 ---
 
-## 5. Copywriting Formulas {#copywriting}
+## 5. Copywriting Formulas
 
 Always apply one of these frameworks to every piece of copy:
 
@@ -202,7 +202,7 @@ Apply to ALL copy as a final check before output.
 
 ---
 
-## 6. SEO & Hashtag Research {#seo}
+## 6. SEO & Hashtag Research
 
 ### Blog SEO Checklist
 - [ ] Primary keyword in title, first 100 words, one H2, meta description
@@ -229,7 +229,7 @@ When researching hashtags, evaluate:
 
 ---
 
-## 7. Content Calendar Management {#calendar}
+## 7. Content Calendar Management
 
 ### Monthly Calendar Template
 - Week 1: Education/How-to content
@@ -247,7 +247,7 @@ When running a campaign (product launch, sale, event):
 
 ---
 
-## 8. Visual Asset Direction {#visuals}
+## 8. Visual Asset Direction
 
 When generating images with `generate_image`:
 - Always request the following in the prompt: Brand colors, text overlay (if any), style (minimalist/vibrant/dark/etc.), platform format (square 1:1 for IG, 16:9 for YT, 9:16 for Stories/Reels)
@@ -258,7 +258,7 @@ When generating images with `generate_image`:
 
 ---
 
-## 9. Paid Ads Strategy {#ads}
+## 9. Paid Ads Strategy
 
 ### Meta Ads (Facebook/Instagram)
 - **Awareness:** Video views or Reach objective. Broad audience. CPM goal.
@@ -277,7 +277,7 @@ When generating images with `generate_image`:
 
 ---
 
-## 10. Analytics & Reporting {#analytics}
+## 10. Analytics & Reporting
 
 ### Key Metrics by Platform
 | Metric | Instagram | YouTube | Facebook | LinkedIn |
@@ -296,7 +296,7 @@ When user asks for a report, generate:
 
 ---
 
-## 11. Email & Newsletter Marketing {#email}
+## 11. Email & Newsletter Marketing
 
 ### Subject Line Formulas
 - Curiosity: "You won't believe what happened when we tried this..."
@@ -315,7 +315,7 @@ When user asks for a report, generate:
 
 ---
 
-## 12. Community Management {#community}
+## 12. Community Management
 
 ### Engagement Response Templates
 When managing comments and DMs:
@@ -332,7 +332,7 @@ When managing comments and DMs:
 
 ---
 
-## 13. A/B Testing {#abtesting}
+## 13. A/B Testing
 
 When creating content, always offer 2 variants for:
 - Post captions (Variant A: emotional/story-driven, Variant B: fact/data-driven)
@@ -344,60 +344,79 @@ Label them clearly as **[Version A]** and **[Version B]** in your output.
 
 ---
 
-## 14. AI Model Routing {#model-routing}
+## 14. AI Model Routing
 
-This skill is designed to work efficiently on low-resource systems (8GB RAM).
+This skill and its accompanying harness run smoothly on any setup:
 
-### Using Gemini (via Antigravity)
-- Default mode. Full capabilities including image generation via `generate_image` tool.
-- Use streaming responses for long content generation.
-- Batch multiple platform outputs into a single structured artifact.
+### Mode 1: Google Antigravity (Native Agentic AI)
+- **Best for:** Autonomous end-to-end campaign execution, complex multi-step reasoning, and visual asset generation.
+- **Capabilities:** Direct tool execution (`generate_image`, file creation, scheduled cron automations, subagent delegation).
+- **Workflow:** Instruct Antigravity via prompt or `/schedule` cron triggers. The agent activates this skill directly and saves complete deliverables into project markdown files.
 
-### Using LM Studio (Local Models - 8GB RAM Optimized)
-When the user is running via LM Studio with a local model:
-- **Recommended models for 8GB RAM:** `Mistral-7B-Instruct`, `Llama-3-8B-Instruct`, `Phi-3-Mini`, `Gemma-2-2B`
-- **RAM optimization tips:**
-  - Use Q4_K_M quantized versions (best quality/RAM balance)
-  - Set context length to 4096 tokens max
-  - Generate one platform at a time (serial, not parallel)
-  - Disable streaming if RAM usage spikes
-- **Fallback for image generation:** When using local models, provide detailed visual direction briefs instead of generating images directly
-- **Chunked output:** Break long campaigns into separate requests (strategy → copy → hashtags) to avoid context overflow
+### Mode 2: Local Models — Hermes, LM Studio & Ollama (Privacy & 8GB RAM Friendly)
+- **Best for:** 100% private, local, offline content drafting with zero recurring API costs.
+- **Recommended models for 8GB RAM:**
+  - `NousResearch/Hermes-3-Llama-3.1-8B` (Q4_K_M) — **Top recommendation:** Exceptional instruction adherence, tool use, and creative copywriting.
+  - `Mistral-7B-Instruct-v0.3` (Q4_K_M) — Crisp, fast, and reliable.
+  - `Meta-Llama-3-8B-Instruct` (Q4_K_M) — Strong logical reasoning and long context.
+  - `Phi-3-mini-4k-instruct` (Q4_K_M) — Ultra-lightweight (~2.2 GB), extremely fast on low memory.
+- **Harness Setup:**
+  - **LM Studio:** Start Local Server on `http://localhost:1234/v1` (OpenAI compatible).
+  - **Ollama:** Run `ollama run hermes3:8b` or `ollama serve` on `http://localhost:11434/v1`.
+- **Optimization Guidelines:**
+  - Quantization: Always choose `Q4_K_M` or `Q4_0`.
+  - Context Window: 4096 tokens max for 8GB RAM systems.
+  - Generation Strategy: Generate platforms serially (one platform at a time) to prevent RAM spikes.
+  - Image Fallback: Use detailed visual direction briefs in place of live image generation tools.
 
-### Model Selection Guide
-| Task | Gemini | Local LLM (8GB) |
-|---|---|---|
-| Short-form copy | ✅ Full | ✅ Any 7B+ |
-| Long-form blog | ✅ Full | ✅ 8B+ preferred |
-| Image generation | ✅ Built-in | ❌ Use visual brief |
-| Complex strategy | ✅ Full | ⚠️ Chunk requests |
-| Code/scripts | ✅ Full | ✅ 7B+ with instruct tuning |
+### Mode 3: Cloud Subscriptions (Gemini, Groq, Claude, DeepSeek, OpenAI)
+- **Best for:** Ultra-fast cloud inference, massive context windows, and high throughput.
+- **Gemini:** Use `gemini-2.0-flash` or `gemini-1.5-pro` via OpenAI-compatible endpoint.
+- **Groq:** Use `llama-3.3-70b-versatile` for near-instant inference (< 1 second per post).
+- **Claude:** Use `claude-3-5-sonnet` for exceptional nuance and brand voice replication.
+- **DeepSeek:** Use `deepseek-chat` for cost-effective, high-reasoning copywriting.
+
+### Model Comparison Matrix
+| Capability | Google Antigravity | Hermes (LM Studio / Ollama) | Cloud (Gemini / Groq / Claude) |
+|---|---|---|---|
+| Privacy / Offline | Cloud-connected | 100% Local & Private | Cloud-connected |
+| Short-form Copy | Excellent | Excellent (Hermes 3) | Excellent |
+| Long-form Blog SEO | Excellent | Good (8B+) | Superior |
+| Image Generation | Built-in tool (`generate_image`) | Visual Direction Brief | Visual Direction Brief |
+| Recurring Automation | Native `/schedule` | `daily_run.sh` / `lm_studio_run.sh` | Cron + Python CLI |
 
 ---
 
-## 15. Automation Playbook {#automation}
+## 15. Automation Playbook
 
-### Daily Automation (via Antigravity `/schedule`)
-Set up these recurring schedules:
+### Antigravity Native Automation
+Set up recurring schedules inside Antigravity:
 
 ```
 # Morning Content Brief (9 AM daily)
-/schedule CronExpression="0 9 * * *" Prompt="Activate digital-marketer skill. Generate today's social media content based on the current campaign. Save as daily_content_[date].md"
+/schedule CronExpression="0 9 * * *" Prompt="Activate digital-marketer skill. Check campaign.json and generate today's social media content."
 
-# Weekly Strategy Review (Every Monday 8 AM)
-/schedule CronExpression="0 8 * * 1" Prompt="Activate digital-marketer skill. Review last week's content performance and generate this week's content calendar."
+# Weekly Content Calendar (Every Monday 8 AM)
+/schedule CronExpression="0 8 * * 1" Prompt="Activate digital-marketer skill. Generate a 7-day content calendar for the active campaign."
 
-# Monthly Report (1st of every month)
-/schedule CronExpression="0 8 1 * *" Prompt="Activate digital-marketer skill. Generate a monthly marketing performance report and content recommendations."
+# Monthly Marketing Performance Report (1st of month)
+/schedule CronExpression="0 8 1 * *" Prompt="Activate digital-marketer skill. Generate a monthly performance report with actionable recommendations."
 ```
 
-### LM Studio Automation (via Shell Script)
-See `scripts/lm_studio_run.sh` for automating content generation with a local model on a schedule using `cron`.
+### Local Model Automation (Cron + Shell Script)
+Run daily with your local LM Studio or Ollama model:
+```bash
+# Test local runner
+bash skill/digital-marketer/scripts/lm_studio_run.sh
+
+# Or universal daily runner (auto-detects local or cloud)
+bash skill/digital-marketer/scripts/daily_run.sh
+```
 
 ---
 
 ## References
-- See `references/platform_best_practices.md` for up-to-date platform algorithm tips
-- See `references/copywriting_swipe_file.md` for 50+ proven hooks and CTAs
-- See `references/hashtag_categories.md` for niche hashtag banks by industry
-- See `examples/sample_campaign.md` for a complete multi-platform campaign example
+- See `references/platform_best_practices.md` for algorithm-specific distribution tactics
+- See `references/copywriting_swipe_file.md` for 50+ proven hooks, frameworks, and CTAs
+- See `references/hashtag_categories.md` for niche hashtag banks across 7+ industries
+- See `examples/sample_campaign.md` for a complete 5-day multi-platform launch example

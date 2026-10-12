@@ -665,10 +665,11 @@
                                         <label>Provider</label>
                                         <select id="cloudProvider">
                                             <option value="gemini">Google Gemini</option>
-                                            <option value="groq">Groq</option>
+                                            <option value="groq">Groq (Ultra-fast)</option>
                                             <option value="claude">Anthropic Claude</option>
                                             <option value="deepseek">Deepseek</option>
-                                            <option value="qwen">Qwen</option>
+                                            <option value="qwen">Qwen (DashScope)</option>
+                                            <option value="openai">OpenAI (GPT-4o)</option>
                                         </select>
                                     </div>
                                     <div class="form-field">
@@ -676,10 +677,42 @@
                                         <input type="password" id="cloudApiKey" placeholder="sk-...">
                                     </div>
                                 </div>
+                                <div class="form-row" style="margin-top: 10px;">
+                                    <div class="form-field">
+                                        <label>Custom Cloud Model (Optional)</label>
+                                        <input type="text" id="cloudModelInput" placeholder="e.g. gemini-2.0-flash, llama-3.3-70b-versatile">
+                                    </div>
+                                    <div class="form-field" style="display:flex; align-items:flex-end;">
+                                        <button type="button" class="btn btn-ghost" id="testCloudAIBtn" style="width:100%"><i class="ph ph-plug"></i> Test Cloud AI</button>
+                                    </div>
+                                </div>
                             </div>
-                            <div class="form-field" id="localSettings" style="display:none; margin-top: 15px; padding: 15px; background: rgba(0,0,0,0.2); border-radius: 8px;">
-                                <label>Local API Base URL</label>
-                                <input type="text" id="localModelUrl" value="http://localhost:1234/v1" placeholder="http://localhost:1234/v1 or http://localhost:11434/v1">
+                            <div id="localSettings" style="display:none; margin-top: 15px; padding: 15px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                                <div class="form-row">
+                                    <div class="form-field">
+                                        <label>Local Harness</label>
+                                        <select id="localHarnessType">
+                                            <option value="lmstudio">LM Studio (localhost:1234)</option>
+                                            <option value="ollama">Ollama (localhost:11434)</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Model Preset / Name</label>
+                                        <input type="text" id="localModelName" value="hermes-3-llama-3.1-8b" placeholder="hermes-3-llama-3.1-8b, mistral-7b, llama3.1">
+                                    </div>
+                                </div>
+                                <div class="form-row" style="margin-top: 10px;">
+                                    <div class="form-field">
+                                        <label>API Base URL</label>
+                                        <input type="text" id="localModelUrl" value="http://localhost:1234/v1" placeholder="http://localhost:1234/v1 or http://localhost:11434/v1">
+                                    </div>
+                                    <div class="form-field" style="display:flex; align-items:flex-end;">
+                                        <button type="button" class="btn btn-ghost" id="testLocalAIBtn" style="width:100%"><i class="ph ph-plug"></i> Test Local Server</button>
+                                    </div>
+                                </div>
+                                <div style="font-size:0.8rem; color:var(--text-muted); margin-top:8px;">
+                                    💡 <em>Supports Hermes 3 / Llama 3 / Mistral / Phi-3 running in LM Studio or Ollama with ChatML & OpenAI-compatible endpoints.</em>
+                                </div>
                             </div>
                         </div>
 
@@ -1373,6 +1406,7 @@
 
     <div class="toast-container" id="toastContainer"></div>
     <script src="credentials.js"></script>
+    <script src="ai-client.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

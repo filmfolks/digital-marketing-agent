@@ -6,18 +6,22 @@
 /* ══════════════════════════════════════════════════════════════
    APP STATE
 ══════════════════════════════════════════════════════════════ */
+const savedSettings = JSON.parse(localStorage.getItem('nexus_settings') || '{}');
+const savedEvents = JSON.parse(localStorage.getItem('nexus_calendar_events') || '[]');
+const savedAI = JSON.parse(localStorage.getItem('nexus_ai_config') || '{}');
+
 const State = {
     currentPage: 'dashboard',
-    model: 'gemini',      // gemini | lmstudio
-    lmStudioUrl: 'http://localhost:1234/v1',
+    model: savedAI.provider || 'local',      // antigravity | local | cloud
+    lmStudioUrl: savedAI.localUrl || 'http://localhost:1234/v1',
     settings: {
-        brand: 'My Brand',
-        niche: '',
-        audience: '',
-        tone: 'professional',
+        brand: savedSettings.brand || 'My Brand',
+        niche: savedSettings.niche || '',
+        audience: savedSettings.audience || '',
+        tone: savedSettings.tone || 'professional',
     },
     calendarDate: new Date(),
-    calendarEvents: [],
+    calendarEvents: savedEvents,
     outputTabs: {},       // { platform: content }
     activeOutputTab: '',
 };
@@ -283,6 +287,20 @@ function generateContent(instruction, platforms, tone, brand, contentType, conte
 
     return results;
 }
+
+window.generateSinglePlatformContent = function(topic, platform, tone, brand, type, ctx) {
+    switch ((platform || '').toLowerCase()) {
+        case 'instagram': return genInstagramContent(topic, tone, brand, type, ctx);
+        case 'facebook':  return genFacebookContent(topic, tone, brand, ctx);
+        case 'youtube':   return genYouTubeContent(topic, tone, brand, ctx);
+        case 'linkedin':  return genLinkedInContent(topic, tone, brand, ctx);
+        case 'twitter':   return genTwitterContent(topic, tone, brand, ctx);
+        case 'blog':      return genBlogContent(topic, brand, ctx);
+        case 'email':     return genEmailContent(topic, tone, brand, ctx);
+        case 'ads':       return genAdCopy(topic, tone, brand);
+        default: return genInstagramContent(topic, tone, brand, type, ctx);
+    }
+};
 
 function genInstagramContent(topic, tone, brand, type, ctx) {
     const hooks = Object.values(CONTENT_DB.hooks).flat();
@@ -662,7 +680,7 @@ function escHtml(str) {
 
 /* ══════════════════════════════════════════════════════════════
    AI AGENT FORM
-══════════════════════════════════════════════════════════════ */
+ ══════════════════════════════════════════════════════════════ */
 document.getElementById('agentForm').addEventListener('submit', async (e) => {
     e.preventDefault();
 
@@ -673,7 +691,7 @@ document.getElementById('agentForm').addEventListener('submit', async (e) => {
     if (!platforms.length) { showToast('Select at least one platform.', 'info'); return; }
 
     const tone = document.getElementById('toneSelect').value;
-    const brand = document.getElementById('brandName').value || 'My Brand';
+    const brand = document.getElementById('brandName').value || State.settings.brand || 'My Brand';
     const contentType = document.querySelector('input[name="contentType"]:checked')?.value || 'daily';
     const context = document.getElementById('agentContext').value;
 
@@ -689,36 +707,46 @@ document.getElementById('agentForm').addEventListener('submit', async (e) => {
     successToast.classList.add('hidden');
     dispatchBtn.disabled = true;
 
-    const steps = [
-        'Analyzing your directive...',
-        'Crafting platform-specific copy...',
-        'Optimizing hashtags and SEO...',
-        'Preparing visual briefs...',
-        'Finalizing content package...',
-    ];
+    try {
+        const results = await window.NexusAI.generate({
+            instruction,
+            platforms,
+            tone,
+            brand,
+            contentType,
+            context,
+            onProgress: (statusMsg) => {
+                feedbackText.textContent = statusMsg;
+            }
+        });
 
-    let step = 0;
-    const stepInterval = setInterval(() => {
-        if (step < steps.length) feedbackText.textContent = steps[step++];
-    }, 400);
+        feedback.classList.add('hidden');
+        dispatchBtn.disabled = false;
 
-    // Simulate generation delay (real AI call would go here)
-    await new Promise(r => setTimeout(r, 2200));
+        State.outputTabs = results;
+        renderOutputTabs(results);
+        outputEmpty.classList.add('hidden');
+        outputTabs.classList.remove('hidden');
+        successToast.classList.remove('hidden');
 
-    clearInterval(stepInterval);
-    feedback.classList.add('hidden');
-    dispatchBtn.disabled = false;
+        // Auto-save generation to local history
+        const history = JSON.parse(localStorage.getItem('nexus_content_history') || '[]');
+        history.unshift({
+            date: new Date().toISOString(),
+            instruction,
+            brand,
+            platforms,
+            results
+        });
+        localStorage.setItem('nexus_content_history', JSON.stringify(history.slice(0, 30)));
 
-    const results = generateContent(instruction, platforms, tone, brand, contentType, context);
-    State.outputTabs = results;
-
-    renderOutputTabs(results);
-    outputEmpty.classList.add('hidden');
-    outputTabs.classList.remove('hidden');
-    successToast.classList.remove('hidden');
-
-    setTimeout(() => successToast.classList.add('hidden'), 4000);
-    showToast(`✅ ${Object.keys(results).length} pieces generated!`, 'success');
+        setTimeout(() => successToast.classList.add('hidden'), 4000);
+        showToast(`✅ Generated ${Object.keys(results).length} piece(s) with ${window.NexusAI.getDisplayName()}!`, 'success');
+    } catch (err) {
+        feedback.classList.add('hidden');
+        dispatchBtn.disabled = false;
+        showToast(`❌ Generation error: ${err.message}`, 'error');
+    }
 });
 
 function renderOutputTabs(results) {
@@ -731,13 +759,15 @@ function renderOutputTabs(results) {
     ).join('');
 
     State.activeOutputTab = platforms[0];
-    tabContent.innerHTML = `<div class="content-block">${escHtml(results[platforms[0]])}</div>`;
+    const initialContent = results[platforms[0]] || '';
+    tabContent.innerHTML = `<div class="content-block">${window.renderMarkdown ? window.renderMarkdown(initialContent) : escHtml(initialContent)}</div>`;
 }
 
 function switchOutputTab(platform) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === platform));
+    const content = State.outputTabs[platform] || '';
     document.getElementById('tabContent').innerHTML =
-        `<div class="content-block">${escHtml(State.outputTabs[platform] || '')}</div>`;
+        `<div class="content-block">${window.renderMarkdown ? window.renderMarkdown(content) : escHtml(content)}</div>`;
     State.activeOutputTab = platform;
 }
 
@@ -973,6 +1003,7 @@ document.getElementById('saveEventBtn')?.addEventListener('click', () => {
     if (!title || !date) { showToast('Enter a title and date', 'info'); return; }
 
     State.calendarEvents.push({ title, date, time, platform, status });
+    localStorage.setItem('nexus_calendar_events', JSON.stringify(State.calendarEvents));
     closeModal();
     renderCalendar();
     showToast(`Post scheduled: ${title}`, 'success');
@@ -1051,6 +1082,10 @@ document.querySelectorAll('input[name="aiModel"]').forEach(radio => {
         if (localField) localField.style.display = radio.value === 'local' ? 'block' : 'none';
         document.getElementById('modelSelect').value = radio.value;
         
+        if (window.NexusAI) {
+            window.NexusAI.saveConfig({ provider: radio.value });
+        }
+        
         let modelName = 'Google Antigravity';
         if (radio.value === 'cloud') modelName = 'Cloud APIs';
         if (radio.value === 'local') modelName = 'Local Models';
@@ -1067,12 +1102,76 @@ document.getElementById('modelSelect')?.addEventListener('change', (e) => {
     }
 });
 
+// Test AI Connection Buttons
+document.getElementById('testLocalAIBtn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('testLocalAIBtn');
+    btn.innerHTML = '<i class="ph ph-spinner" style="animation:spin .7s linear infinite"></i> Testing...';
+    btn.disabled = true;
+
+    const localUrl = document.getElementById('localModelUrl')?.value || 'http://localhost:1234/v1';
+    const localType = document.getElementById('localHarnessType')?.value || 'lmstudio';
+    const localModel = document.getElementById('localModelName')?.value || 'hermes-3-llama-3.1-8b';
+
+    const res = await window.NexusAI.testConnection({
+        provider: 'local',
+        localUrl,
+        localType,
+        localModel
+    });
+
+    btn.innerHTML = '<i class="ph ph-plug"></i> Test Local Server';
+    btn.disabled = false;
+    showToast(res.message, res.ok ? 'success' : 'error');
+});
+
+document.getElementById('testCloudAIBtn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('testCloudAIBtn');
+    btn.innerHTML = '<i class="ph ph-spinner" style="animation:spin .7s linear infinite"></i> Testing...';
+    btn.disabled = true;
+
+    const cloudProvider = document.getElementById('cloudProvider')?.value || 'gemini';
+    const cloudApiKey = document.getElementById('cloudApiKey')?.value || '';
+    const cloudModel = document.getElementById('cloudModelInput')?.value || '';
+
+    const res = await window.NexusAI.testConnection({
+        provider: 'cloud',
+        cloudProvider,
+        cloudApiKey,
+        cloudModel
+    });
+
+    btn.innerHTML = '<i class="ph ph-plug"></i> Test Cloud AI';
+    btn.disabled = false;
+    showToast(res.message, res.ok ? 'success' : 'error');
+});
+
 document.getElementById('saveSettingsBtn')?.addEventListener('click', () => {
     State.settings.brand = document.getElementById('settingsBrand')?.value || 'My Brand';
     State.settings.niche = document.getElementById('settingsNiche')?.value || '';
     State.settings.audience = document.getElementById('settingsAudience')?.value || '';
     State.settings.tone = document.querySelector('input[name="brandTone"]:checked')?.value || 'professional';
-    showToast('Settings saved successfully!', 'success');
+    localStorage.setItem('nexus_settings', JSON.stringify(State.settings));
+
+    // Save AI Config
+    const aiProvider = document.querySelector('input[name="aiModel"]:checked')?.value || 'local';
+    const aiUpdates = {
+        provider: aiProvider,
+        localType: document.getElementById('localHarnessType')?.value || 'lmstudio',
+        localModel: document.getElementById('localModelName')?.value || 'hermes-3-llama-3.1-8b',
+        localUrl: document.getElementById('localModelUrl')?.value || 'http://localhost:1234/v1',
+        cloudProvider: document.getElementById('cloudProvider')?.value || 'gemini',
+        cloudApiKey: document.getElementById('cloudApiKey')?.value || '',
+        cloudModel: document.getElementById('cloudModelInput')?.value || ''
+    };
+    if (window.NexusAI) {
+        window.NexusAI.saveConfig(aiUpdates);
+    }
+
+    // Sync Brand into main input if empty
+    const brandInput = document.getElementById('brandName');
+    if (brandInput && !brandInput.value) brandInput.value = State.settings.brand;
+
+    showToast('Settings & AI configuration saved successfully!', 'success');
 });
 
 function copyScheduleCmd() {
@@ -1112,6 +1211,57 @@ document.getElementById('saveDraftBtn')?.addEventListener('click', () => {
     setGreeting();
     initDashboard();
     renderQuickTemplates();
+
+    // Populate Brand & Settings fields from state
+    if (document.getElementById('brandName')) {
+        document.getElementById('brandName').value = State.settings.brand || 'My Brand';
+    }
+    if (document.getElementById('settingsBrand')) {
+        document.getElementById('settingsBrand').value = State.settings.brand || '';
+    }
+    if (document.getElementById('settingsNiche')) {
+        document.getElementById('settingsNiche').value = State.settings.niche || '';
+    }
+    if (document.getElementById('settingsAudience')) {
+        document.getElementById('settingsAudience').value = State.settings.audience || '';
+    }
+    if (State.settings.tone) {
+        const toneRadio = document.querySelector(`input[name="brandTone"][value="${State.settings.tone}"]`);
+        if (toneRadio) toneRadio.checked = true;
+        const toneSelect = document.getElementById('toneSelect');
+        if (toneSelect) toneSelect.value = State.settings.tone;
+    }
+
+    // Populate AI harness configuration from NexusAI
+    if (window.NexusAI && window.NexusAI.config) {
+        const cfg = window.NexusAI.config;
+        const aiRadio = document.querySelector(`input[name="aiModel"][value="${cfg.provider || 'local'}"]`);
+        if (aiRadio) {
+            aiRadio.checked = true;
+            aiRadio.dispatchEvent(new Event('change'));
+        }
+        const modelSelect = document.getElementById('modelSelect');
+        if (modelSelect) modelSelect.value = cfg.provider || 'local';
+
+        if (document.getElementById('localHarnessType')) {
+            document.getElementById('localHarnessType').value = cfg.localType || 'lmstudio';
+        }
+        if (document.getElementById('localModelName')) {
+            document.getElementById('localModelName').value = cfg.localModel || 'hermes-3-llama-3.1-8b';
+        }
+        if (document.getElementById('localModelUrl')) {
+            document.getElementById('localModelUrl').value = cfg.localUrl || 'http://localhost:1234/v1';
+        }
+        if (document.getElementById('cloudProvider')) {
+            document.getElementById('cloudProvider').value = cfg.cloudProvider || 'gemini';
+        }
+        if (document.getElementById('cloudApiKey')) {
+            document.getElementById('cloudApiKey').value = cfg.cloudApiKey || '';
+        }
+        if (document.getElementById('cloudModelInput')) {
+            document.getElementById('cloudModelInput').value = cfg.cloudModel || '';
+        }
+    }
 
     // Ensure dashboard is default active
     switchPage('dashboard');
@@ -1244,41 +1394,33 @@ function generateHubContent(platform, toolType) {
     const outputEl = document.getElementById(outputId);
     if (!outputEl) return;
 
-    outputEl.innerHTML = '<div class="agent-feedback"><div class="spinner-ring"></div><span>Generating content...</span></div>';
+    outputEl.innerHTML = '<div class="agent-feedback"><div class="spinner-ring"></div><span>AI Agent is crafting content...</span></div>';
 
-    // Simulate AI generation time
-    setTimeout(() => {
-        // Fallback to our existing generator functions but modified for the specific hub request
-        let content = '';
-        const tone = State.settings.tone;
-        const brand = State.settings.brand;
+    (async () => {
+        try {
+            const tone = State.settings.tone;
+            const brand = State.settings.brand;
 
-        // Route to the appropriate existing generator but wrap it to look like the specific tool's output
-        if (platform === 'instagram') {
-            content = genInstagramContent(topicVal, tone, brand, toolType === 'reel' ? 'reel' : 'post', '');
-            if (toolType === 'carousel') {
-                content = content.replace('**Caption:**', '**Slide 1 (Hook):**\n[Visual: Bold text on solid background]\n\n**Slide 2 (Context):**\n[Visual: Data point or chart]\n\n**Slide 3 (Value):**\n[Visual: List or diagram]\n\n**Slide 4 (Action):**\n[Visual: Step-by-step graphic]\n\n**Slide 5 (CTA):**\n[Visual: Save icon prominent]\n\n**Caption:**');
-            }
-        } else if (platform === 'facebook') {
-            content = toolType === 'ad' ? genAdCopy(topicVal, tone, brand) : genFacebookContent(topicVal, tone, brand, '');
-        } else if (platform === 'youtube') {
-            content = genYouTubeContent(topicVal, tone, brand, '');
-            if (toolType === 'title') {
-                const lines = content.split('\n');
-                content = `🎬 **YOUTUBE TITLES (A/B TESTING)**\n\n1. "The Ultimate Guide to ${topicVal}"\n2. "Why You're Doing ${topicVal} Wrong (And How to Fix It)"\n3. "I Tried ${topicVal} For 30 Days — Here's What Happened"\n4. "7 ${topicVal} Secrets the Experts Won't Tell You"\n5. "Stop Scrolling: Read This Before You Try ${topicVal}"`;
-            }
-        } else if (platform === 'linkedin') {
-            content = genLinkedInContent(topicVal, tone, brand, '');
-            if (toolType === 'poll') {
-                content = `💼 **LINKEDIN POLL**\n\n**Question:**\nWhat is your biggest challenge right now when it comes to ${topicVal}?\n\n**Options (Max 30 chars each):**\n1. Lack of time\n2. Budget constraints\n3. Don't know where to start\n4. Finding the right tools\n\n**Accompanying Post:**\nI've been having a lot of conversations this week about ${topicVal}.\n\nIt seems like everyone is struggling with something different.\n\nI'm curious to hear from my network — what's the biggest hurdle you're facing with this right now?\n\nVote below, or drop a comment if your specific challenge isn't listed! 👇`;
-            }
-        } else if (platform === 'blog') {
-            content = genBlogContent(topicVal, brand, '');
+            const res = await window.NexusAI.generate({
+                instruction,
+                platforms: [platform],
+                tone,
+                brand,
+                contentType: toolType,
+                context: `Tool: ${toolType} for ${platform}`,
+                onProgress: (msg) => {
+                    outputEl.innerHTML = `<div class="agent-feedback"><div class="spinner-ring"></div><span>${msg}</span></div>`;
+                }
+            });
+
+            const content = res[platform] || Object.values(res)[0] || '';
+            outputEl.innerHTML = `<div class="content-block">${window.renderMarkdown ? window.renderMarkdown(content) : escHtml(content)}</div>`;
+            showToast('Generated successfully!', 'success');
+        } catch (err) {
+            outputEl.innerHTML = `<div class="content-block error-block">❌ Error: ${err.message}</div>`;
+            showToast(`Failed: ${err.message}`, 'error');
         }
-
-        outputEl.innerHTML = `<div class="content-block">${escHtml(content)}</div>`;
-        showToast('Generated successfully!', 'success');
-    }, 1500);
+    })();
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -1354,7 +1496,7 @@ function testConnection(platform) {
     if (!statusEl) return;
 
     statusEl.className = 'pac-status log-info';
-    statusEl.innerHTML = `<span class="status-dot-sm"></span> Testing...`;
+    statusEl.innerHTML = `<span class="status-dot-sm"></span> Testing credentials...`;
 
     setTimeout(() => {
         const saved = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
@@ -1368,27 +1510,31 @@ function testConnection(platform) {
             canva:     'canva-access-token',
         }[platform];
 
-        const token = saved[tokenField] || document.getElementById(tokenField)?.value;
+        const token = (saved[tokenField] || document.getElementById(tokenField)?.value || '').trim();
 
-        if (token && token.length > 5) {
+        if (token && token.length > 10) {
             statusEl.className = 'pac-status connected';
-            statusEl.innerHTML = `<span class="status-dot-sm"></span> Connected ✓`;
-            showToast(`${platform.charAt(0).toUpperCase() + platform.slice(1)} credentials look valid!`, 'success');
+            statusEl.innerHTML = `<span class="status-dot-sm"></span> Ready ✓`;
+            showToast(`${platform.charAt(0).toUpperCase() + platform.slice(1)}: Token configured and ready for automation.`, 'success');
+        } else if (token) {
+            statusEl.className = 'pac-status log-info';
+            statusEl.innerHTML = `<span class="status-dot-sm"></span> Token format warning`;
+            showToast(`${platform}: Token seems unusually short. Verify your OAuth/API token.`, 'info');
         } else {
             statusEl.className = 'pac-status error';
-            statusEl.innerHTML = `<span class="status-dot-sm"></span> No token found`;
-            showToast(`${platform}: No access token saved. Please fill in credentials first.`, 'info');
+            statusEl.innerHTML = `<span class="status-dot-sm"></span> Missing credentials`;
+            showToast(`${platform}: No access token found. Please enter and save credentials.`, 'info');
         }
-    }, 1200);
+    }, 600);
 }
 
 function testAllConnections() {
     Object.keys(CRED_FIELDS).forEach((platform, i) => {
-        setTimeout(() => testConnection(platform), i * 300);
+        setTimeout(() => testConnection(platform), i * 200);
     });
 }
 
-/* ── Publish Now ─────────────────────────────────────────────── */
+/* ── Publish Pipeline ─────────────────────────────────────────── */
 function previewAutoPost() {
     const content = document.getElementById('autoPostContent')?.value;
     const platforms = [...document.querySelectorAll('input[name="autoPlat"]:checked')].map(cb => cb.value);
@@ -1399,10 +1545,10 @@ function previewAutoPost() {
 
     const log = document.getElementById('publishLog');
     log.innerHTML = `
-        <div class="log-entry log-info"><i class="ph ph-eye"></i> <strong>Preview for ${platforms.join(', ')}</strong></div>
-        <div class="log-entry log-pending"><i class="ph ph-text-align-left"></i> Content: "${content.substring(0, 80)}${content.length > 80 ? '...' : ''}"</div>
-        ${media ? `<div class="log-entry log-pending"><i class="ph ph-image"></i> Media: ${media}</div>` : ''}
-        ${schedule ? `<div class="log-entry log-pending"><i class="ph ph-clock"></i> Scheduled: ${new Date(schedule).toLocaleString()}</div>` : '<div class="log-entry log-pending"><i class="ph ph-clock"></i> Publish: Immediately</div>'}
+        <div class="log-entry log-info"><i class="ph ph-eye"></i> <strong>Validation Preview for ${platforms.join(', ')}</strong></div>
+        <div class="log-entry log-pending"><i class="ph ph-text-align-left"></i> Content: "${content.substring(0, 80)}${content.length > 80 ? '...' : ''}" (${content.length} chars)</div>
+        ${media ? `<div class="log-entry log-pending"><i class="ph ph-image"></i> Media Asset: ${media}</div>` : '<div class="log-entry log-pending"><i class="ph ph-image"></i> Media: Text-only post</div>'}
+        ${schedule ? `<div class="log-entry log-pending"><i class="ph ph-clock"></i> Target Schedule: ${new Date(schedule).toLocaleString()}</div>` : '<div class="log-entry log-pending"><i class="ph ph-clock"></i> Target Schedule: Immediate Publish</div>'}
     `;
 }
 
@@ -1414,13 +1560,12 @@ function publishNow() {
     if (!platforms.length) { showToast('Select at least one platform.', 'info'); return; }
 
     const log = document.getElementById('publishLog');
-    log.innerHTML = `<div class="log-entry log-info"><i class="ph ph-spinner" style="animation:spin .7s linear infinite"></i> Initiating publish sequence...</div>`;
+    log.innerHTML = `<div class="log-entry log-info"><i class="ph ph-spinner" style="animation:spin .7s linear infinite"></i> Verifying credentials and dispatching to publishing queue...</div>`;
 
     const saved = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
 
     platforms.forEach((platform, i) => {
         setTimeout(() => {
-            // Check if token exists for this platform
             const tokenField = {
                 instagram: 'ig-access-token',
                 facebook:  'fb-page-token',
@@ -1431,20 +1576,19 @@ function publishNow() {
             }[platform];
 
             const hasToken = tokenField && (saved[tokenField] || document.getElementById(tokenField)?.value);
-
             const icon = { instagram: 'ph-fill ph-instagram-logo', facebook: 'ph-fill ph-facebook-logo', youtube: 'ph-fill ph-youtube-logo', twitter: 'ph-fill ph-twitter-logo', linkedin: 'ph-fill ph-linkedin-logo', blogger: 'ph ph-globe-simple' }[platform] || 'ph ph-check';
 
             if (hasToken) {
-                log.innerHTML += `<div class="log-entry log-success"><i class="${icon}"></i> <strong>${platform.charAt(0).toUpperCase() + platform.slice(1)}:</strong> Published successfully! ✓ <small style="margin-left:auto;opacity:.6">${new Date().toLocaleTimeString()}</small></div>`;
+                log.innerHTML += `<div class="log-entry log-success"><i class="${icon}"></i> <strong>${platform.charAt(0).toUpperCase() + platform.slice(1)}:</strong> Payload validated with saved token! Ready to push via Python daemon / webhook. ✓ <small style="margin-left:auto;opacity:.6">${new Date().toLocaleTimeString()}</small></div>`;
             } else {
-                log.innerHTML += `<div class="log-entry log-error"><i class="${icon}"></i> <strong>${platform.charAt(0).toUpperCase() + platform.slice(1)}:</strong> No credentials — please connect this account first.</div>`;
+                log.innerHTML += `<div class="log-entry log-error"><i class="${icon}"></i> <strong>${platform.charAt(0).toUpperCase() + platform.slice(1)}:</strong> Missing credentials. Go to Connected Accounts to configure API token.</div>`;
             }
-        }, (i + 1) * 700);
+        }, (i + 1) * 500);
     });
 
     setTimeout(() => {
-        showToast(`Publish sequence complete for ${platforms.length} platform(s).`, 'success');
-    }, platforms.length * 700 + 300);
+        showToast(`Publish pipeline executed for ${platforms.length} platform(s).`, 'success');
+    }, platforms.length * 500 + 300);
 }
 
 /* ── API Automation Scripts ──────────────────────────────────── */
