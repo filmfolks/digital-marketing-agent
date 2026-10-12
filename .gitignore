@@ -1,4 +1,3 @@
-.DS_Store
-*.log
-.env
-ui/credentials.js
+__pycache__/
+*.pyc
+logs/*.jsonl

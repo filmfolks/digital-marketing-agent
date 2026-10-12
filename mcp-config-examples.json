@@ -1,0 +1,47 @@
+{
+  "_comment": "Drop these snippets into each client's MCP config to connect Nexus skills (browser automation, DevTools, campaign planning, video render, Telegram) to any agent host.",
+  "claude_desktop": {
+    "mcpServers": {
+      "nexus-social-manager": {
+        "command": "python3",
+        "args": ["ABSOLUTE_PATH/agent/nexus_mcp.py"],
+        "env": { "TELEGRAM_BOT_TOKEN": "", "TELEGRAM_CHAT_ID": "" }
+      }
+    }
+  },
+  "google_antigravity": {
+    "mcp": {
+      "servers": {
+        "nexus": {
+          "transport": "stdio",
+          "command": "python3 agent/nexus_mcp.py",
+          "description": "Nexus digital-marketer skill set: content, ads planning, browser automation, DevTools, rendering, Telegram control"
+        },
+        "playwright": {
+          "transport": "stdio",
+          "command": "npx @playwright/mcp@latest",
+          "description": "Optional: microsoft/playwright-mcp for richer DOM/CDP control inside Antigravity"
+        },
+        "chrome-devtools": {
+          "transport": "stdio",
+          "command": "npx chrome-devtools-mcp@latest",
+          "description": "Optional: official ChromeDevTools/chrome-devtools-mcp server"
+        }
+      }
+    }
+  },
+  "lm_studio_hermes": {
+    "_how": "LM Studio → Installed → MCP Servers → Add: command python3, args [ABSOLUTE_PATH/agent/nexus_mcp.py]. Hermes tool-calling will discover the 11 Nexus tools automatically.",
+    "mcpServers": {
+      "nexus": { "command": "python3", "args": ["ABSOLUTE_PATH/agent/nexus_mcp.py"] }
+    }
+  },
+  "cursor_vs_code_copilot": {
+    "mcpServers": {
+      "nexus": { "command": "python3", "args": ["${workspaceFolder}/agent/nexus_mcp.py"] }
+    }
+  },
+  "xai_grok_agentic": {
+    "_note": "Grok does not yet accept stdio MCP servers directly; expose nexus_mcp over an SSE gateway (e.g. supergateway: npx -y supergateway --stdio \"python3 agent/nexus_mcp.py\" --port 8957) and register the URL in clients that support remote MCP."
+  }
+}

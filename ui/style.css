@@ -963,3 +963,34 @@ select option { background: #1a1a24; }
 .mt-2 { margin-top: 8px; }
 .mb-2 { margin-bottom: 8px; }
 
+
+/* ═══ AGENT LOGS PAGE ═══ */
+.agent-log-list { max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.log-empty { padding: 30px; text-align: center; opacity: .6; font-size: .9rem; }
+.agent-log-row {
+    display: grid; grid-template-columns: 175px 90px 140px 1fr; gap: 12px; align-items: start;
+    padding: 10px 14px; border-radius: 10px; font-size: .82rem;
+    background: rgba(255,255,255,.03); border-left: 3px solid transparent;
+}
+.agent-log-row.lvl-error   { border-left-color: #dc2626; background: rgba(220,38,38,.07); }
+.agent-log-row.lvl-warn    { border-left-color: #f59e0b; background: rgba(245,158,11,.06); }
+.agent-log-row.lvl-success { border-left-color: #16a34a; }
+.al-time { opacity: .65; font-family: monospace; }
+.al-level { font-weight: 700; letter-spacing: .04em; font-size: .72rem; }
+.lvl-error .al-level { color: #ef4444; }
+.lvl-warn .al-level { color: #f59e0b; }
+.lvl-success .al-level { color: #22c55e; }
+.al-src { font-family: monospace; opacity: .8; }
+.al-msg details { margin-top: 6px; }
+.al-msg summary { cursor: pointer; opacity: .6; font-size: .75rem; }
+.al-msg pre { white-space: pre-wrap; word-break: break-all; background: rgba(0,0,0,.25); padding: 8px; border-radius: 6px; font-size: .75rem; margin-top: 4px; }
+
+/* ═══ TUTORIAL PAGE ═══ */
+.tutorial-progress { font-size: .8rem; opacity: .6; margin-bottom: 8px; }
+.tutorial-title { font-size: 1.3rem; margin: 6px 0 12px; }
+.tutorial-body { white-space: pre-wrap; font-family: inherit; font-size: .95rem; line-height: 1.7; opacity: .9; background: rgba(0,0,0,.18); padding: 18px; border-radius: 12px; }
+.tutorial-jump { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 22px; font-size: .85rem; opacity: .8; }
+#tutPrevBtn:disabled { opacity: .35; cursor: not-allowed; }
+
+/* ═══ ERROR TOAST ═══ */
+.toast.toast-error { border-color: rgba(220,38,38,.45); background: linear-gradient(135deg, rgba(60,10,10,.95), rgba(30,8,8,.95)); }

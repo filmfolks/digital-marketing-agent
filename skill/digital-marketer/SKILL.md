@@ -33,6 +33,9 @@ When this skill is active, you are the user's full marketing department.
 13. [A/B Testing](#abtesting)
 14. [AI Model Routing](#model-routing)
 15. [Automation Playbook](#automation)
+16. [Browser Automation & DevTools Skill](#browser-automation)
+17. [MCP Server — Connecting External Tools](#mcp-integrations)
+18. [Telegram Bot Control](#telegram-control)
 
 ---
 
@@ -393,6 +396,56 @@ Set up these recurring schedules:
 
 ### LM Studio Automation (via Shell Script)
 See `scripts/lm_studio_run.sh` for automating content generation with a local model on a schedule using `cron`.
+
+---
+
+## 16. Browser Automation & DevTools Skill {#browser-automation}
+
+The agent can operate a real Chrome/Chromium browser like a developer — powered by `agent/browser_automation.py`.
+
+**Engines (auto-selected):**
+1. **Playwright** (`pip install playwright && playwright install chromium`) — https://github.com/microsoft/playwright
+2. **Chrome DevTools Protocol** directly (`chrome --remote-debugging-port=9222`, `pip install websocket-client`) — https://chromedevtools.github.io/devtools-protocol/
+
+**Capabilities:** `navigate` · `snapshot` (accessibility-style DOM tree) · `extract` (CSS selector → texts) · `screenshot` (full page PNG) · `devtools` (console errors, perf timings, network resource list) · `act` (click/type/press/scroll).
+
+**Permission model — the user must allow browsing actions:**
+- Read-only commands run freely but are always written to `logs/browser_audit.jsonl`.
+- State-changing `act` commands require `--allow-actions`, which only gets set when the user ticks **Grant Browser Actions Permission** on the Browser Agent page (UI) or taps **✅ Approve** in Telegram.
+- A deny-list permanently refuses destructive targets (`log out`, `delete account`, `remove payment`, `cancel subscription`) even with permission.
+
+```bash
+python3 agent/browser_automation.py navigate --url https://example.com
+python3 agent/browser_automation.py devtools --what console      # JS errors on the page
+python3 agent/browser_automation.py act --allow-actions --action click --target "button.publish"
+python3 agent/nexus_relay.py   # localhost:8712 HTTP bridge so the UI drives the above live
+```
+
+Use it for: competitor research, verifying published posts render correctly, scraping trend data for content ideas, QA of client landing pages (console + performance audit), and filling publishing forms when APIs are unavailable.
+
+## 17. MCP Server — Connecting External Tools {#mcp-integrations}
+
+`agent/nexus_mcp.py` is a zero-dependency **Model Context Protocol** server (JSON-RPC 2.0 over stdio). Any MCP-capable host — Google Antigravity, Claude Desktop, LM Studio (Hermes tool-calling), Cursor, VS Code Copilot, or Grok via an SSE gateway (supergateway) — becomes a front-end for Nexus skills.
+
+Register:
+```json
+{ "mcpServers": { "nexus": { "command": "python3", "args": ["agent/nexus_mcp.py"] } } }
+```
+
+**Exposed tools (11):** `generate_content`, `plan_campaign`, `hashtag_research`, `browser_navigate`, `browser_snapshot`, `browser_screenshot`, `browser_act` (permission-gated), `devtools_inspect`, `render_video`, `telegram_notify`, `read_agent_logs`. Verify: `python3 agent/nexus_mcp.py --self-test`.
+
+**Adding future tools (Adobe After Effects, Premiere, Canva, CRMs):** implement a handler function + schema entry in `TOOLS` — see §Creative Studio Bridge below for the AE plan. Interop repos: https://github.com/modelcontextprotocol/python-sdk · https://github.com/microsoft/playwright-mcp · https://github.com/ChromeDevTools/chrome-devtools-mcp
+
+## 18. Telegram Bot Control {#telegram-control}
+
+`agent/telegram_bot.py` lets the owner run the entire manager from a phone (stdlib long-polling; production alternative: https://github.com/python-telegram-bot/python-telegram-bot).
+
+Commands: `/status` `/generate <topic>` `/plan <goal> [days] [budget]` `/hashtags <niche>` `/browse <url>` `/shot <url>` `/act click|type …` `/post <platform> <text>` `/logs [n]` `/help`. Free text routes straight to the content engine.
+
+Security: only allowlisted chat IDs may command the bot; `/act` and `/post` send an inline **✅ Approve / ❌ Reject** keyboard and execute ONLY after approval within 5 minutes; everything lands in `logs/telegram_audit.jsonl`. Setup: BotFather token → chat id → `export TELEGRAM_BOT_TOKEN=… TELEGRAM_CHAT_ID=… && python3 agent/telegram_bot.py`. The UI's **MCP & Integrations** page stores credentials and tests/sends messages directly.
+
+### Creative Studio Bridge (roadmap)
+Client poster/video pipeline: brief → `generate_content` copy → Canva/AE design (`render_video` uses FFmpeg today; next step is an After Effects CEP/UXP extension that pulls the brief through this same MCP server, fills a template comp, renders MP4) → Telegram approval → Calendar → publish. Every stage is already an MCP tool boundary, so AE plugs in without touching existing code.
 
 ---
 
