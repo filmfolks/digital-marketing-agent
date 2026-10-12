@@ -1219,3 +1219,31 @@ kbd {
     .post-detail { padding: 16px; }
     .content-actions { gap: 6px; }
 }
+
+
+/* ═══════════════════════════════════════════════════════════════
+   Mobile / iOS polish (PWA is the phone client)
+   ═══════════════════════════════════════════════════════════════ */
+@supports (height: 100dvh) {
+    body { min-height: 100dvh; }
+    .app-shell, .sidebar { height: 100dvh; }
+}
+body {
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+}
+@media (max-width: 900px) {
+    /* iOS Safari zooms into inputs below 16px */
+    input, select, textarea { font-size: 16px !important; }
+    .btn, button, [role="button"] { min-height: 44px; }      /* Apple HIG touch target */
+    .main-area { padding-bottom: calc(16px + env(safe-area-inset-bottom)); -webkit-overflow-scrolling: touch; }
+    .sidebar { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+    pre, code, .schedule-code-block { overflow-x: auto; max-width: 100%; }
+    table { display: block; overflow-x: auto; }
+}
+@media (max-width: 420px) {
+    .glass-card { padding: 14px !important; }
+    h1 { font-size: 1.35rem; }
+}

@@ -2,7 +2,12 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Nexus">
+    <meta name="format-detection" content="telephone=no">
     <meta name="description" content="Nexus — AI-Powered Digital Marketing Command Center for social media, content creation, and campaign automation.">
     <meta name="theme-color" content="#7c3aed">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -824,7 +829,13 @@
                             <p class="helper-text">The relay (<code>python3 agent/nexus_relay.py</code>) executes browser automation and publishing on this machine. It only accepts requests from Nexus and, if you set <code>NEXUS_RELAY_TOKEN</code>, requires the token below.</p>
                             <div class="form-row">
                                 <div class="form-field">
-                                    <label>Relay token (optional but recommended)</label>
+                                    <label>Relay address (leave empty for this computer; on a phone use e.g. https://192.168.1.20:8712)</label>
+                                    <input type="url" id="relayUrl" inputmode="url" autocomplete="off" placeholder="auto">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>Relay token (required when the relay runs in LAN/phone mode)</label>
                                     <input type="password" id="relayToken" placeholder="paste the token printed by the relay">
                                 </div>
                                 <div class="form-field" style="display:flex; align-items:flex-end;">

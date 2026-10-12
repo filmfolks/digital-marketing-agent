@@ -1784,6 +1784,7 @@ function loadSettings() {
     const tgc = document.getElementById('tgChatId'); if (tgc) tgc.value = savedCreds['telegram-chat-id'] || '';
     const bap = document.getElementById('browserActionsPermission'); if (bap) bap.checked = !!savedCreds['browser-actions-permission'];
     const rt = document.getElementById('relayToken'); if (rt) rt.value = savedCreds['relay-token'] || '';
+    const ru = document.getElementById('relayUrl'); if (ru) ru.value = savedCreds['relay-url'] || '';
     loadGuardrailsIntoUi();
     updateProviderHint();
 }
@@ -1889,7 +1890,23 @@ function copyScheduleCmd() {
    token. The token is stored here and sent as X-Nexus-Token so a
    random website you have open cannot drive your machine.
 ═════════════════════════════════════════════════════════════ */
-const RELAY_URL = 'http://127.0.0.1:8712';
+const DEFAULT_RELAY_URL = 'http://127.0.0.1:8712';
+
+/**
+ * Where the relay lives.
+ *   1. An address saved in Settings (phone → desktop over LAN, or a hosted relay)
+ *   2. The page's own origin when the PWA was loaded FROM the relay (/app/…)
+ *   3. This computer (127.0.0.1:8712)
+ */
+function relayUrl() {
+    const saved = (safeJson('nexus_credentials', {})['relay-url'] || '').trim();
+    if (saved) return saved.replace(/\/+$/, '');
+    if (typeof location !== 'undefined' && /^https?:$/.test(location.protocol || '') &&
+        (location.pathname || '').startsWith('/app/')) {
+        return location.origin;
+    }
+    return DEFAULT_RELAY_URL;
+}
 
 function relayToken() {
     return safeJson('nexus_credentials', {})['relay-token'] || '';
@@ -1897,8 +1914,11 @@ function relayToken() {
 
 function saveRelayToken() {
     const token = document.getElementById('relayToken')?.value.trim() || '';
+    const url = document.getElementById('relayUrl')?.value.trim() || '';
     const creds = safeJson('nexus_credentials', {});
     if (token) creds['relay-token'] = token; else delete creds['relay-token'];
+    if (url && !/^https?:\/\/[^/]+/.test(url)) { showToast('Relay address must start with http:// or https://', 'error'); return; }
+    if (url) creds['relay-url'] = url.replace(/\/+$/, ''); else delete creds['relay-url'];
     localStorage.setItem('nexus_credentials', JSON.stringify(creds));
     showToast(token ? 'Relay token saved' : 'Relay token cleared', 'success');
     checkRelayHealth();
@@ -1909,7 +1929,7 @@ async function relayCall(path, { method = 'POST', body = null, ms = 30000 } = {}
     const headers = { 'Content-Type': 'application/json' };
     const token = relayToken();
     if (token) headers['X-Nexus-Token'] = token;
-    const res = await fetchWithTimeout(`${RELAY_URL}${path}`, {
+    const res = await fetchWithTimeout(`${relayUrl()}${path}`, {
         method,
         headers,
         body: body ? JSON.stringify(body) : undefined,
@@ -2078,7 +2098,7 @@ async function socialAgentRun(workflow) {
             const shotDiv = document.getElementById('socialAgentScreenshot');
             const shotImg = document.getElementById('socialAgentScreenshotImg');
             if (shotDiv && shotImg) {
-                shotImg.src = RELAY_URL + '/shots/' + parsed.screenshot.split('/').pop() + '?t=' + Date.now();
+                shotImg.src = relayUrl() + '/shots/' + parsed.screenshot.split('/').pop() + '?t=' + Date.now();
                 shotDiv.style.display = 'block';
             }
         }
@@ -2153,7 +2173,7 @@ async function browserCmd(cmd) {
     }
 
     AgentLog.info('browser.cmd', `Dispatching browser command: ${cmd}`, { url, sel });
-    browserOut(`⏳ ${cmd} … talking to the local relay (${RELAY_URL})`);
+    browserOut(`⏳ ${cmd} … talking to the relay (${relayUrl()})`);
 
     // Real execution via the Python relay (agent/nexus_relay.py).
     try {

@@ -1,0 +1,12 @@
+{
+  "appId": "com.thoshotech.nexus",
+  "appName": "Nexus",
+  "webDir": "ui",
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "https",
+    "cleartext": false
+  },
+  "ios": { "contentInset": "always" },
+  "android": { "allowMixedContent": false }
+}

@@ -366,6 +366,24 @@ await test('manifest is installable: 192 + 512 PNG icons that exist, and the SW 
     }
 });
 
+await test('service worker only caches inside its scope (relay API on same origin is never cached)', async () => {
+    const fs = await import('node:fs');
+    const sw = fs.readFileSync(path.join(uiDir, 'sw.js'), 'utf8');
+    assert.match(sw, /registration\.scope/);
+    assert.match(sw, /if \(!url\.href\.startsWith\(scope\)\) return false;/);
+});
+
+await test('relay address is configurable for phone/LAN use and auto-detects /app/ hosting', async () => {
+    const fs = await import('node:fs');
+    const js = fs.readFileSync(path.join(uiDir, 'script.js'), 'utf8');
+    const html = fs.readFileSync(path.join(uiDir, 'index.html'), 'utf8');
+    assert.match(js, /function relayUrl\(\)/);
+    assert.ok(!/\$\{RELAY_URL\}/.test(js), 'hard-coded RELAY_URL still used');
+    assert.match(html, /id="relayUrl"/);
+    assert.match(html, /viewport-fit=cover/);
+    assert.match(html, /apple-mobile-web-app-capable/);
+});
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

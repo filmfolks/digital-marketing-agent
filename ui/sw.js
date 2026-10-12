@@ -19,7 +19,7 @@
  *   non-GET            → pass through (publishing, AI calls, relay)
  */
 
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE = `nexus-ui-${VERSION}`;
 const PRECACHE = [
     './',
@@ -79,6 +79,11 @@ self.addEventListener('message', (event) => {
 function isCacheableSameOrigin(url) {
     if (url.origin !== self.location.origin) return false;
     if (NEVER_CACHE_HOSTS.includes(url.hostname)) return false;
+    // When the PWA is served by the relay (/app/ on a LAN IP), the relay's API
+    // (/health, /queue, /shots/…) shares the origin. Only cache files inside
+    // this worker's scope, never API responses.
+    const scope = (self.registration && self.registration.scope) || self.location.href.replace(/[^/]*$/, '');
+    if (!url.href.startsWith(scope)) return false;
     return true;
 }
 
