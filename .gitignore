@@ -1,7 +1,8 @@
 .DS_Store
 *.log
-logs/
+logs/*.jsonl
 output/
+shots/*.png
 .env
 __pycache__/
 *.pyc

@@ -12,7 +12,7 @@ const savedAI = JSON.parse(localStorage.getItem('nexus_ai_config') || '{}');
 
 const State = {
     currentPage: 'dashboard',
-    model: savedAI.provider || 'local',      // antigravity | local | cloud
+    model: savedAI.provider || 'local',      // antigravity | local | cloud | builtin
     lmStudioUrl: savedAI.localUrl || 'http://localhost:1234/v1',
     settings: {
         brand: savedSettings.brand || 'My Brand',
@@ -20,11 +20,215 @@ const State = {
         audience: savedSettings.audience || '',
         tone: savedSettings.tone || 'professional',
     },
+    cloudProvider: 'gemini',
     calendarDate: new Date(),
     calendarEvents: savedEvents,
     outputTabs: {},       // { platform: content }
     activeOutputTab: '',
 };
+
+/* ══════════════════════════════════════════════════════════════
+   AGENT EVENT / ERROR LOG  (documents every agent action & failure)
+   Persisted to localStorage; viewable on the "Agent Logs" page
+   and exportable as JSON for debugging / incident reports.
+══════════════════════════════════════════════════════════════ */
+const AgentLog = (() => {
+    const KEY = 'nexus_agent_log';
+    const MAX = 500;
+
+    function read() {
+        try { return JSON.parse(localStorage.getItem(KEY) || '[]'); }
+        catch { return []; }
+    }
+    function write(entries) {
+        try { localStorage.setItem(KEY, JSON.stringify(entries.slice(-MAX))); } catch {}
+    }
+    function push(level, source, message, detail = '') {
+        const entry = {
+            ts: new Date().toISOString(),
+            level,                      // info | warn | error | success
+            source,                     // e.g. agent.engine, publish, provider:xai
+            message,
+            detail: typeof detail === 'string' ? detail : JSON.stringify(detail),
+        };
+        const entries = read();
+        entries.push(entry);
+        write(entries);
+        if (level === 'error') {
+            updateErrorBadge();
+            showToast(`⚠️ Agent issue logged: ${message}`, 'error');
+        }
+        return entry;
+    }
+    const info    = (s, m, d) => push('info', s, m, d);
+    const warn    = (s, m, d) => push('warn', s, m, d);
+    const error   = (s, m, d) => push('error', s, m, d);
+    const success = (s, m, d) => push('success', s, m, d);
+
+    function clear() { write([]); updateErrorBadge(); }
+    function all() { return read(); }
+    function errors() { return read().filter(e => e.level === 'error' || e.level === 'warn'); }
+
+    function updateErrorBadge() {
+        const badge = document.getElementById('logErrorBadge');
+        const n = errors().length;
+        if (badge) {
+            badge.textContent = String(n);
+            badge.style.display = n ? 'flex' : 'none';
+        }
+    }
+
+    function exportJson() {
+        const blob = new Blob([JSON.stringify(read(), null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `nexus-agent-log-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        info('agent.log', 'Agent log exported');
+    }
+
+    return { info, warn, error, success, clear, all, errors, exportJson, updateErrorBadge };
+})();
+
+/* ══════════════════════════════════════════════════════════════
+   MULTI-PROVIDER AGENT ENGINE
+   Supported backends (all OpenAI-compatible chat completions):
+     • Local:  LM Studio (Hermes models via LM Studio), Ollama
+     • Cloud:  xAI Grok, Groq, OpenRouter (any model incl. Hermes),
+               Google Gemini (OpenAI-compat endpoint), Anthropic Claude
+     • Agentic: Google Antigravity skill workflow (prompt handoff)
+   Features: timeout control, exponential-backoff retries, automatic
+   provider failover chain, and full documentation of failures.
+══════════════════════════════════════════════════════════════ */
+const PROVIDERS = {
+    'lmstudio':   { label: 'LM Studio (local)',  baseUrl: 'http://localhost:1234/v1',           needsKey: false, kind: 'local' },
+    'ollama':     { label: 'Ollama (local)',     baseUrl: 'http://localhost:11434/v1',          needsKey: false, kind: 'local' },
+    'xai':        { label: 'xAI Grok',           baseUrl: 'https://api.x.ai/v1',                needsKey: true,  kind: 'cloud', model: 'grok-4' },
+    'openrouter': { label: 'OpenRouter',         baseUrl: 'https://openrouter.ai/api/v1',       needsKey: true,  kind: 'cloud', model: 'nousresearch/hermes-4-405b' },
+    'groq':       { label: 'Groq',               baseUrl: 'https://api.groq.com/openai/v1',     needsKey: true,  kind: 'cloud', model: 'llama-3.3-70b-versatile' },
+    'gemini':     { label: 'Google Gemini',      baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', needsKey: true, kind: 'cloud', model: 'gemini-2.5-flash' },
+    'anthropic':  { label: 'Anthropic Claude',   baseUrl: 'https://api.anthropic.com/v1',       needsKey: true,  kind: 'cloud', model: 'claude-sonnet-4-20250514' },
+};
+
+function getProviderConfig(id) {
+    const saved = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
+    const base = PROVIDERS[id] || PROVIDERS['lmstudio'];
+    return {
+        id,
+        ...base,
+        baseUrl: saved[`prov-${id}-url`] || base.baseUrl,
+        apiKey:  saved[`prov-${id}-key`] || '',
+        model:   saved[`prov-${id}-model`] || base.model || 'local-model',
+    };
+}
+
+async function fetchWithTimeout(url, options = {}, ms = 30000) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    try {
+        return await fetch(url, { ...options, signal: ctrl.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+/** Call one provider's chat completions endpoint with retries + backoff. */
+async function callProvider(cfg, messages, { maxTokens = 900, temperature = 0.75, retries = 2, timeout = 30000 } = {}) {
+    let lastErr;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const headers = { 'Content-Type': 'application/json' };
+            if (cfg.apiKey) headers['Authorization'] = `Bearer ${cfg.apiKey}`;
+            const res = await fetchWithTimeout(`${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ model: cfg.model, messages, max_tokens: maxTokens, temperature }),
+            }, timeout);
+
+            if (!res.ok) {
+                const body = await res.text().catch(() => '');
+                // 4xx (except 429) won't be fixed by retrying
+                if (res.status >= 400 && res.status < 500 && res.status !== 429) {
+                    throw Object.assign(new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`), { fatal: true });
+                }
+                throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
+            }
+            const data = await res.json();
+            const text = data?.choices?.[0]?.message?.content;
+            if (!text) throw new Error('Empty completion returned by model');
+            return text;
+        } catch (e) {
+            lastErr = e;
+            const aborted = e.name === 'AbortError';
+            AgentLog.warn(`provider:${cfg.id}`,
+                `Attempt ${attempt + 1}/${retries + 1} failed (${aborted ? 'timeout' : e.message})`);
+            if (e.fatal || attempt === retries) break;
+            await sleep(500 * Math.pow(2, attempt)); // exponential backoff
+        }
+    }
+    throw lastErr;
+}
+
+/** Run the task against the configured engine, failing over down the chain. */
+async function runAgent(messages, opts = {}) {
+    const engine = State.model;
+    let chain = [];
+
+    if (engine === 'cloud') {
+        const primary = getProviderConfig(State.cloudProvider);
+        chain = [primary, getProviderConfig('openrouter'), getProviderConfig('groq')]
+            .filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+    } else if (engine === 'local') {
+        const url = (document.getElementById('localModelUrl')?.value || 'http://localhost:1234/v1');
+        const isOllama = url.includes('11434');
+        chain = [getProviderConfig(isOllama ? 'ollama' : 'lmstudio')];
+        chain[0].baseUrl = url;
+        chain.push(getProviderConfig(isOllama ? 'lmstudio' : 'ollama'));
+    } else {
+        chain = []; // builtin / antigravity handoff mode — no live API call
+    }
+
+    const attempts = [];
+    for (const cfg of chain) {
+        if (cfg.needsKey && !cfg.apiKey) {
+            attempts.push({ provider: cfg.id, ok: false, reason: 'No API key configured — skipped' });
+            AgentLog.warn(`provider:${cfg.id}`, 'Skipped: missing API key');
+            continue;
+        }
+        try {
+            const out = await callProvider(cfg, messages, opts);
+            attempts.push({ provider: cfg.id, ok: true });
+            AgentLog.info('agent.engine', `Generation succeeded via "${cfg.label}"`, { chain: attempts });
+            return { text: out, provider: cfg.id };
+        } catch (e) {
+            attempts.push({ provider: cfg.id, ok: false, reason: e.message });
+            AgentLog.error('agent.engine', `AI agent FAILED on "${cfg.label}": ${e.message}`,
+                { provider: cfg.id, chain: attempts, model: cfg.model });
+        }
+    }
+
+    if (chain.length) {
+        AgentLog.error('agent.engine', 'All providers in failover chain exhausted — falling back to built-in template engine', { attempts });
+    }
+    return null; // caller falls back to built-in generator
+}
+
+async function testProviderConnection(id) {
+    const cfg = getProviderConfig(id);
+    if (cfg.needsKey && !cfg.apiKey) return { ok: false, reason: 'API key not set' };
+    try {
+        const res = await fetchWithTimeout(`${cfg.baseUrl.replace(/\/$/, '')}/models`, {
+            headers: cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {},
+        }, 8000);
+        if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` };
+        return { ok: true, reason: 'Reachable' };
+    } catch (e) {
+        return { ok: false, reason: e.name === 'AbortError' ? 'Timeout / server offline' : e.message };
+    }
+}
 
 /* ══════════════════════════════════════════════════════════════
    ROUTING
@@ -43,6 +247,8 @@ const PAGE_TITLES = {
     linkedin: 'LinkedIn Hub',
     blog: 'Blog & SEO Hub',
     trends: 'Trending Now',
+    browser: 'Browser Agent',
+    integrations: 'MCP & Integrations',
 };
 
 function switchPage(pageId) {
@@ -71,7 +277,10 @@ function switchPage(pageId) {
     if (pageId === 'calendar') renderCalendar();
     if (pageId === 'analytics') initAnalytics();
     if (pageId === 'trends') fetchTrends();
+    if (pageId === 'logs') renderAgentLogs();
+    if (pageId === 'tutorial') initTutorial();
     if (pageId === 'accounts') { setTimeout(initAccountsPage, 50); }
+    if (pageId === 'browser') initBrowserPage();
 }
 
 document.querySelectorAll('.nav-link').forEach(link => {
@@ -264,6 +473,20 @@ const CONTENT_DB = {
         },
     },
 };
+
+const AGENT_SYSTEM_PROMPT = `You are Nexus, a world-class Digital Marketing Expert and Social Media Manager.
+Skills: strategy, platform-native copywriting (Instagram, Facebook, YouTube, LinkedIn, X/Twitter, TikTok, Blog/SEO),
+Meta Ads & Google Ads campaign design, creative direction, hashtag & UTM research, A/B testing, analytics interpretation
+(CPM/CPC/CTR/ROAS), email marketing, and community management.
+Rules: always deliver ready-to-post markdown per platform; use AIDA/PAS/HOOK-VALUE-CTA formulas; provide Version A/B variants;
+include hashtags by volume tier, posting-time advice, and a visual brief. Never invent metrics or fake testimonials.`;
+
+function buildAgentMessages(topic, tone, brand, platform, extraContext = '') {
+    return [
+        { role: 'system', content: AGENT_SYSTEM_PROMPT },
+        { role: 'user', content: `Brand: ${brand}\nTopic/directive: ${topic}\nPlatform: ${platform}\nTone: ${tone}${extraContext ? `\nExtra context: ${extraContext}` : ''}\n\nGenerate one complete, ready-to-post ${platform} content package in markdown.` },
+    ];
+}
 
 function generateContent(instruction, platforms, tone, brand, contentType, context) {
     const results = {};
@@ -652,6 +875,8 @@ function toneStatement(tone, topic) {
         educational: `Research consistently shows that those who invest in ${topic} see measurable results within 90 days.`,
         humorous: `${topic}... it's like assembling IKEA furniture — confusing at first, but deeply satisfying when it clicks. 😂`,
         urgent: `Every day you wait on ${topic} is a day your competitors get ahead. The window is closing. ⚡`,
+        bold: `Let's be blunt: ignoring ${topic} in ${new Date().getFullYear()} is a choice — and it's costing you. Own it. 🔥`,
+        playful: `Okay real talk — ${topic} is basically the group project nobody wanted... until now. Let's make it fun! 🎉`,
     };
     return statements[tone] || statements.professional;
 }
@@ -675,7 +900,9 @@ function generateTags(topic) {
 }
 
 function escHtml(str) {
-    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -708,6 +935,11 @@ document.getElementById('agentForm').addEventListener('submit', async (e) => {
     dispatchBtn.disabled = true;
 
     try {
+        if (typeof AgentLog !== 'undefined') {
+            AgentLog.info('agent.dispatch', `Task dispatched: "${instruction.slice(0, 80)}"`,
+                { platforms, tone, brand, contentType, engine: State.model });
+        }
+
         const results = await window.NexusAI.generate({
             instruction,
             platforms,
@@ -741,10 +973,17 @@ document.getElementById('agentForm').addEventListener('submit', async (e) => {
         localStorage.setItem('nexus_content_history', JSON.stringify(history.slice(0, 30)));
 
         setTimeout(() => successToast.classList.add('hidden'), 4000);
-        showToast(`✅ Generated ${Object.keys(results).length} piece(s) with ${window.NexusAI.getDisplayName()}!`, 'success');
+        const engineLabel = (window.NexusAI && window.NexusAI.getDisplayName) ? window.NexusAI.getDisplayName() : (PROVIDERS[State.model]?.label || State.model);
+        if (typeof AgentLog !== 'undefined') {
+            AgentLog.success('agent.dispatch', `Task completed via ${engineLabel}`, { pieces: Object.keys(results) });
+        }
+        showToast(`✅ Generated ${Object.keys(results).length} piece(s) with ${engineLabel}!`, 'success');
     } catch (err) {
         feedback.classList.add('hidden');
         dispatchBtn.disabled = false;
+        if (typeof AgentLog !== 'undefined') {
+            AgentLog.error('agent.dispatch', 'Generation error', err.message);
+        }
         showToast(`❌ Generation error: ${err.message}`, 'error');
     }
 });
@@ -755,8 +994,10 @@ function renderOutputTabs(results) {
     const platforms = Object.keys(results);
 
     tabsRow.innerHTML = platforms.map((p, i) =>
-        `<button class="tab-btn ${i === 0 ? 'active' : ''}" data-tab="${p}" onclick="switchOutputTab('${p}')">${p.toUpperCase()}</button>`
+        `<button class="tab-btn ${i === 0 ? 'active' : ''}" data-tab="${escHtml(p)}">${escHtml(p.toUpperCase())}</button>`
     ).join('');
+    tabsRow.querySelectorAll('.tab-btn').forEach(btn =>
+        btn.addEventListener('click', () => switchOutputTab(btn.dataset.tab)));
 
     State.activeOutputTab = platforms[0];
     const initialContent = results[platforms[0]] || '';
@@ -861,11 +1102,13 @@ document.getElementById('genHashtagBtn')?.addEventListener('click', () => {
     const niche = Object.keys(CONTENT_DB.hashtag_banks).find(k => topic.includes(k)) || 'marketing';
     const bank = CONTENT_DB.hashtag_banks[niche];
     const allTags = [...bank.mega, ...bank.large, ...bank.medium, ...bank.niche];
-    const pills = allTags.map((tag, i) => {
+    const outEl = document.getElementById('hashtagOutput');
+    outEl.innerHTML = allTags.map((tag, i) => {
         const cls = i < 5 ? 'ht-mega' : i < 10 ? 'ht-large' : i < 14 ? 'ht-medium' : 'ht-niche';
-        return `<span class="ht-pill ${cls}" onclick="copyTag('${tag}')" title="Click to copy">${tag}</span>`;
+        return `<span class="ht-pill ${cls}" data-tag="${escHtml(tag)}" title="Click to copy">${escHtml(tag)}</span>`;
     }).join('');
-    document.getElementById('hashtagOutput').innerHTML = pills;
+    outEl.querySelectorAll('.ht-pill').forEach(p =>
+        p.addEventListener('click', () => copyTag(p.dataset.tag)));
 });
 
 // Email Generator
@@ -1064,42 +1307,42 @@ document.getElementById('htGenBtn')?.addEventListener('click', () => {
         <div class="ht-section">
             <div class="ht-section-label">${s.label}</div>
             <div class="ht-section-pills">
-                ${s.tags.map(t => `<span class="ht-pill ${s.cls}" onclick="copyTag('${t}')" title="Click to copy">${t}</span>`).join('')}
+                ${s.tags.map(t => `<span class="ht-pill ${s.cls}" data-tag="${escHtml(t)}" title="Click to copy">${escHtml(t)}</span>`).join('')}
             </div>
         </div>
     `).join('');
+    resultsEl.querySelectorAll('.ht-pill').forEach(p =>
+        p.addEventListener('click', () => copyTag(p.dataset.tag)));
 });
 
 /* ══════════════════════════════════════════════════════════════
    SETTINGS
 ══════════════════════════════════════════════════════════════ */
+function applyEngineToUi(engine, { notify = false } = {}) {
+    State.model = engine;
+    const cloudField = document.getElementById('cloudSettings');
+    const localField = document.getElementById('localSettings');
+    if (cloudField) cloudField.style.display = engine === 'cloud' ? 'block' : 'none';
+    if (localField) localField.style.display = engine === 'local' ? 'block' : 'none';
+    const sel = document.getElementById('modelSelect');
+    if (sel) sel.value = engine;
+    const radio = document.querySelector(`input[name="aiModel"][value="${engine}"]`);
+    if (radio) radio.checked = true;
+    if (window.NexusAI) {
+        window.NexusAI.saveConfig({ provider: engine });
+    }
+    const names = { antigravity: 'Google Antigravity (agentic handoff)', cloud: 'Cloud APIs', local: 'Local Models (LM Studio / Ollama)', builtin: 'Built-in templates' };
+    if (notify) showToast(`Agent engine: ${names[engine] || engine}`, 'success');
+    saveSettings();
+}
+
 document.querySelectorAll('input[name="aiModel"]').forEach(radio => {
-    radio.addEventListener('change', () => {
-        State.model = radio.value;
-        const cloudField = document.getElementById('cloudSettings');
-        const localField = document.getElementById('localSettings');
-        if (cloudField) cloudField.style.display = radio.value === 'cloud' ? 'block' : 'none';
-        if (localField) localField.style.display = radio.value === 'local' ? 'block' : 'none';
-        document.getElementById('modelSelect').value = radio.value;
-        
-        if (window.NexusAI) {
-            window.NexusAI.saveConfig({ provider: radio.value });
-        }
-        
-        let modelName = 'Google Antigravity';
-        if (radio.value === 'cloud') modelName = 'Cloud APIs';
-        if (radio.value === 'local') modelName = 'Local Models';
-        showToast(`Agent engine switched to ${modelName}`, 'success');
-    });
+    radio.addEventListener('change', () => applyEngineToUi(radio.value, { notify: true }));
 });
 
+
 document.getElementById('modelSelect')?.addEventListener('change', (e) => {
-    State.model = e.target.value;
-    const matchingRadio = document.querySelector(`input[name="aiModel"][value="${e.target.value}"]`);
-    if (matchingRadio) {
-        matchingRadio.checked = true;
-        matchingRadio.dispatchEvent(new Event('change'));
-    }
+    applyEngineToUi(e.target.value, { notify: true });
 });
 
 // Test AI Connection Buttons
@@ -1145,15 +1388,111 @@ document.getElementById('testCloudAIBtn')?.addEventListener('click', async () =>
     showToast(res.message, res.ok ? 'success' : 'error');
 });
 
+document.getElementById('cloudProvider')?.addEventListener('change', (e) => {
+    State.cloudProvider = e.target.value;
+    // prefill the key field if we already have one saved for this provider
+    const saved = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
+    const kf = document.getElementById('cloudApiKey');
+    if (kf) kf.value = saved[`prov-${e.target.value}-key`] || '';
+    saveSettings();
+});
+
+/* ── Provider key management (Settings page) ── */
+function currentProviderId() {
+    return document.getElementById('cloudProvider')?.value || State.cloudProvider || 'gemini';
+}
+
+function saveProviderKey() {
+    const id = currentProviderId();
+    const key = document.getElementById('cloudApiKey')?.value.trim();
+    if (!key) { showToast('Enter an API key first.', 'info'); return; }
+    const saved = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
+    saved[`prov-${id}-key`] = key;
+    localStorage.setItem('nexus_credentials', JSON.stringify(saved));
+    if (typeof AgentLog !== 'undefined') {
+        AgentLog.info(`provider:${id}`, 'API key saved to browser storage (never transmitted to any Nexus server)');
+    }
+    showToast(`${PROVIDERS[id]?.label || id} key saved`, 'success');
+}
+
+async function pingProvider() {
+    const id = currentProviderId();
+    const typed = document.getElementById('cloudApiKey')?.value.trim();
+    if (typed) {
+        const saved = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
+        saved[`prov-${id}-key`] = typed;
+        localStorage.setItem('nexus_credentials', JSON.stringify(saved));
+    }
+    const out = document.getElementById('providerTestResult');
+    if (out) out.textContent = 'Testing...';
+    let res = { ok: false, reason: 'unknown' };
+    if (typeof testProviderConnection === 'function') {
+        res = await testProviderConnection(id);
+    } else if (window.NexusAI) {
+        const testRes = await window.NexusAI.testConnection({ provider: 'cloud', cloudProvider: id, cloudApiKey: typed });
+        res = { ok: testRes.ok, reason: testRes.message };
+    }
+    if (out) out.textContent = res.ok ? 'Reachable OK' : `FAIL: ${res.reason}`;
+    if (typeof AgentLog !== 'undefined') {
+        if (res.ok) AgentLog.success(`provider:${id}`, 'Connection test passed');
+        else AgentLog.error(`provider:${id}`, `Connection test failed: ${res.reason}`);
+    }
+    showToast(res.ok ? `${PROVIDERS[id]?.label || id}: reachable` : `${PROVIDERS[id]?.label || id}: ${res.reason}`, res.ok ? 'success' : 'error');
+}
+
+// Persist local model base URL so engine survives reloads
+document.getElementById('localModelUrl')?.addEventListener('change', (e) => {
+    State.lmStudioUrl = e.target.value;
+    const saved = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
+    if (e.target.value.trim()) saved['local-model-url'] = e.target.value.trim();
+    localStorage.setItem('nexus_credentials', JSON.stringify(saved));
+});
+
+const SETTINGS_KEY = 'nexus_settings';
+
+function saveSettings() {
+    try {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+            settings: State.settings,
+            model: State.model,
+            cloudProvider: State.cloudProvider,
+        }));
+    } catch {}
+}
+
+function loadSettings() {
+    let s;
+    try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); } catch { s = null; }
+    if (!s) return;
+    Object.assign(State.settings, s.settings || {});
+    State.cloudProvider = s.cloudProvider || 'gemini';
+    const brand = State.settings.brand;
+    const bEl = document.getElementById('brandName'); if (bEl) bEl.value = brand;
+    const sb = document.getElementById('settingsBrand'); if (sb) sb.value = brand;
+    const sn = document.getElementById('settingsNiche'); if (sn) sn.value = State.settings.niche;
+    const sa = document.getElementById('settingsAudience'); if (sa) sa.value = State.settings.audience;
+    const toneRadio = document.querySelector(`input[name="brandTone"][value="${State.settings.tone}"]`);
+    if (toneRadio) toneRadio.checked = true;
+    applyEngineToUi(s.model || 'antigravity');
+    const cp = document.getElementById('cloudProvider'); if (cp) cp.value = State.cloudProvider;
+    const savedCreds = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
+    const lm = document.getElementById('localModelUrl');
+    if (lm && savedCreds['local-model-url']) { lm.value = savedCreds['local-model-url']; State.lmStudioUrl = savedCreds['local-model-url']; }
+    const kf = document.getElementById('cloudApiKey');
+    if (kf) kf.value = savedCreds[`prov-${State.cloudProvider}-key`] || '';
+    const tgt = document.getElementById('tgToken'); if (tgt) tgt.value = savedCreds['telegram-token'] || '';
+    const tgc = document.getElementById('tgChatId'); if (tgc) tgc.value = savedCreds['telegram-chat-id'] || '';
+    const bap = document.getElementById('browserActionsPermission'); if (bap) bap.checked = !!savedCreds['browser-actions-permission'];
+}
+
 document.getElementById('saveSettingsBtn')?.addEventListener('click', () => {
     State.settings.brand = document.getElementById('settingsBrand')?.value || 'My Brand';
     State.settings.niche = document.getElementById('settingsNiche')?.value || '';
     State.settings.audience = document.getElementById('settingsAudience')?.value || '';
     State.settings.tone = document.querySelector('input[name="brandTone"]:checked')?.value || 'professional';
-    localStorage.setItem('nexus_settings', JSON.stringify(State.settings));
 
     // Save AI Config
-    const aiProvider = document.querySelector('input[name="aiModel"]:checked')?.value || 'local';
+    const aiProvider = document.querySelector('input[name="aiModel"]:checked')?.value || State.model || 'local';
     const aiUpdates = {
         provider: aiProvider,
         localType: document.getElementById('localHarnessType')?.value || 'lmstudio',
@@ -1165,6 +1504,11 @@ document.getElementById('saveSettingsBtn')?.addEventListener('click', () => {
     };
     if (window.NexusAI) {
         window.NexusAI.saveConfig(aiUpdates);
+    }
+
+    saveSettings();
+    if (typeof AgentLog !== 'undefined') {
+        AgentLog.info('settings', 'User settings saved', State.settings);
     }
 
     // Sync Brand into main input if empty
@@ -1180,17 +1524,284 @@ function copyScheduleCmd() {
 }
 
 /* ══════════════════════════════════════════════════════════════
+   BROWSER AGENT SKILL (Playwright / Chrome DevTools Protocol)
+   UI front-end for agent/browser_automation.py. Talks to a local
+   relay (python3 agent/nexus_relay.py → http://localhost:8712) when
+   present; otherwise shows the exact CLI command + simulated result
+   so the workflow is learnable offline. Permission-gated actions.
+══════════════════════════════════════════════════════════════ */
+const RELAY_URL = 'http://localhost:8712';
+const BROWSER_DENY = [
+    /delete[_ -]?(my[_ -])?account/i, /log\s*out/i, /sign\s*out/i,
+    /remove[_ -]?payment/i, /cancel[_ -]?subscription/i,
+];
+
+function browserPermissionGranted() {
+    return !!document.getElementById('browserActionsPermission')?.checked;
+}
+
+function initBrowserPage() {
+    const cb = document.getElementById('browserActionsPermission');
+    const chip = document.getElementById('browserPermChip');
+    const saved = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
+    if (cb) {
+        cb.checked = !!saved['browser-actions-permission'];
+        cb.onchange = () => {
+            const c = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
+            c['browser-actions-permission'] = cb.checked ? Date.now() : 0;
+            localStorage.setItem('nexus_credentials', JSON.stringify(c));
+            updateBrowserChip();
+            AgentLog.info('browser.permission', cb.checked
+                ? 'User GRANTED browser actions permission (click/type allowed)'
+                : 'User REVOKED browser actions permission (back to read-only)');
+            showToast(cb.checked ? '🔓 Browser actions unlocked' : '🔒 Read-only mode restored', 'success');
+        };
+    }
+    updateBrowserChip();
+}
+
+function updateBrowserChip() {
+    const chip = document.getElementById('browserPermChip');
+    if (!chip) return;
+    chip.textContent = browserPermissionGranted() ? '🔓 Actions allowed' : '🔒 Read-only mode';
+    chip.style.color = browserPermissionGranted() ? '#4ade80' : '';
+}
+
+function browserOut(text) {
+    const el = document.getElementById('browserOutput');
+    if (el) el.textContent = text;
+}
+
+function clearBrowserOut() { browserOut('Cleared.'); }
+
+function cliFor(cmd, url, sel, value) {
+    const base = `python3 agent/browser_automation.py`;
+    switch (cmd) {
+        case 'navigate':          return `${base} navigate --url "${url}"`;
+        case 'snapshot':          return `${base} snapshot`;
+        case 'extract':           return `${base} extract --selector "${sel}"`;
+        case 'screenshot':        return `${base} screenshot --out shots/page.png`;
+        case 'devtools-console':  return `${base} devtools --what console`;
+        case 'devtools-perf':     return `${base} devtools --what perf`;
+        case 'act-click':         return `${base} act --allow-actions --action click --target "${sel}"`;
+        case 'act-type':          return `${base} act --allow-actions --action type --target "${sel}" --value "${value}"`;
+        default: return base;
+    }
+}
+
+async function browserCmd(cmd) {
+    const url = (document.getElementById('browserUrl')?.value || '').trim();
+    const sel = (document.getElementById('browserSelector')?.value || '').trim();
+    const value = (document.getElementById('browserTypeValue')?.value || '').trim();
+    const isAction = cmd.startsWith('act-');
+    const vf = document.getElementById('browserValueField');
+    if (vf) vf.style.display = cmd === 'act-type' ? 'block' : 'none';
+
+    // URL sanity + deny-list
+    if (['navigate','screenshot'].includes(cmd) || isAction) {
+        if (cmd !== 'screenshot' && !/^https?:\/\//i.test(url)) {
+            browserOut(`❌ Enter a full URL starting with http(s)://`);
+            AgentLog.warn('browser.cmd', `Rejected malformed URL for ${cmd}`, url);
+            return;
+        }
+    }
+    if (BROWSER_DENY.some(re => re.test(url) || re.test(sel))) {
+        browserOut(`⛔ BLOCKED by safety deny-list: destructive target ("${sel || url}").\nThe agent refuses logout/delete-account/payment-removal operations even with permission.`);
+        AgentLog.error('browser.safety', `Deny-list blocked: ${cmd}`, { url, sel });
+        showToast('Browser action blocked by safety policy', 'error');
+        return;
+    }
+    if (isAction && !browserPermissionGranted()) {
+        browserOut(`🔐 PERMISSION REQUIRED\n\n"${cmd}" changes page state (click/type). Grant "Browser Actions Permission" at the top of this page first — it mirrors the --allow-actions flag in the CLI and the user_permission_granted gate in MCP.\n\nCLI equivalent:\n${cliFor(cmd, url, sel, value)}`);
+        AgentLog.warn('browser.permission', `Blocked ${cmd}: user has not granted browser actions`, { url, sel });
+        showToast('Grant Browser Actions Permission first', 'error');
+        return;
+    }
+    if (['extract','act-click','act-type'].includes(cmd) && !sel) {
+        browserOut(`❌ Fill in the CSS selector field for "${cmd}".`);
+        return;
+    }
+
+    AgentLog.info('browser.cmd', `Dispatching browser command: ${cmd}`, { url, sel });
+    browserOut(`⏳ ${cmd} … trying local relay (${RELAY_URL})`);
+
+    // Try real execution via the Python relay (agent/nexus_relay.py or any HTTP shim)
+    try {
+        const res = await fetchWithTimeout(`${RELAY_URL}/browser`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cmd, url, selector: sel, value,
+                                    allowActions: isAction && browserPermissionGranted() }),
+        }, 20000);
+        if (res.ok) {
+            const data = await res.text();
+            browserOut(`✅ ${cmd} completed via relay\n\n${data.slice(0, 6000)}`);
+            AgentLog.success('browser.cmd', `${cmd} executed on real browser`, { url, sel });
+            showToast(`Browser: ${cmd} done`, 'success');
+            return;
+        }
+        // BUG FIX: a 403 from the relay is a POLICY BLOCK (real answer), not an
+        // offline relay. Show the refusal instead of falling through to simulation.
+        if (res.status === 403) {
+            let reason = '';
+            try { reason = (await res.json()).reason || ''; } catch (_) {}
+            browserOut(`⛔ BLOCKED by the agent's permission policy:\n\n${reason}\n\nCLI equivalent:\n${cliFor(cmd, url, sel, value)}`);
+            AgentLog.warn('browser.blocked', `Relay refused ${cmd} (policy block)`, { url, sel });
+            showToast('Browser action blocked — permission required', 'error');
+            return;
+        }
+        throw new Error(`relay HTTP ${res.status}`);
+    } catch (e) {
+        // Offline fallback: show exact reproducible command + simulated demo output
+        const sim = simulateBrowserResult(cmd, url, sel);
+        browserOut(
+`ℹ️ Local relay not running (${e.message}). Here is the exact command your machine will execute once you run:
+   pip install playwright && playwright install chromium
+   python3 agent/nexus_relay.py        # tiny stdlib HTTP→CLI bridge
+
+$ ${cliFor(cmd, url, sel, value)}
+
+── SIMULATED RESULT (for training/demo) ──
+${sim}
+
+Everything above is logged to Agent Logs + logs/browser_audit.jsonl when run for real.`);
+        AgentLog.info('browser.sim', `${cmd} simulated (relay offline)`, { url, sel });
+    }
+}
+
+function simulateBrowserResult(cmd, url, sel) {
+    switch (cmd) {
+        case 'navigate': return `{
+  "url": "${url}",
+  "title": "Example Domain",
+  "loadMs": 812,
+  "engine": "playwright-chromium"
+}`;
+        case 'snapshot': return `h1 :: Example Domain
+a#more-info :: More information…
+p :: This domain is for use in illustrative examples…`;
+        case 'extract':  return `{
+  "selector": "${sel}",
+  "texts": ["Example Domain", "This domain is for use in illustrative examples…"]
+}`;
+        case 'screenshot': return `{ "screenshot": "shots/nexus_page.png", "bytes": 84213 }`;
+        case 'devtools-console': return `[{"type":"error","text":"Uncaught TypeError: Cannot read properties of undefined","ts":"…"}]  ← agent detected 1 JS error on the page`;
+        case 'devtools-perf': return `{ "domContentLoaded": 412, "loadComplete": 812, "resourceCount": 17 }`;
+        case 'act-click': return `{ "result": "click '${sel}' done — page title: Example Domain", "audit": "logs/browser_audit.jsonl" }`;
+        case 'act-type':  return `{ "result": "type '${sel}' done", "charsTyped": ${(document.getElementById('browserTypeValue')?.value||'').length} }`;
+        default: return '{}';
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   MCP & INTEGRATIONS PAGE
+══════════════════════════════════════════════════════════════ */
+const MCP_TOOLS_CATALOG = [
+    ['generate_content',   'Platform-native marketing copy (tone/brand/platform aware)'],
+    ['plan_campaign',      'Multi-day campaign incl. Meta Ads & Google Ads phases + budget split'],
+    ['hashtag_research',   'Tiered hashtag sets (broad/mid/niche)'],
+    ['browser_navigate',   'Open URL in agent browser — read-only'],
+    ['browser_snapshot',   'Accessibility-style DOM snapshot'],
+    ['browser_screenshot', 'Full-page screenshot to ./shots'],
+    ['browser_act',        'Click/type — REQUIRES user_permission_granted=true'],
+    ['devtools_inspect',   'Chrome DevTools: console errors / perf / network timings'],
+    ['render_video',       'Poster images → MP4 (FFmpeg now; After Effects bridge next)'],
+    ['telegram_notify',    'Push reports/messages to your Telegram'],
+    ['read_agent_logs',    'Pull browser+agent audit log for debugging'],
+];
+
+function copyMcpCmd() {
+    const txt = document.getElementById('mcpCmdBlock')?.textContent || '';
+    navigator.clipboard.writeText(txt).then(() => showToast('MCP config copied — paste into Claude Desktop / Antigravity / LM Studio', 'success'));
+}
+
+function showMcpTools() {
+    const out = document.getElementById('mcpToolsOut');
+    if (!out) return;
+    out.classList.remove('hidden');
+    out.textContent = 'nexus-social-manager v2.0 exposes ' + MCP_TOOLS_CATALOG.length + ' tools:\n\n' +
+        MCP_TOOLS_CATALOG.map(([n, d]) => `• ${n.padEnd(20)} ${d}`).join('\n') +
+        '\n\nVerify live: python3 agent/nexus_mcp.py --self-test';
+    AgentLog.info('integrations.mcp', 'Tool catalog displayed', { count: MCP_TOOLS_CATALOG.length });
+}
+
+/* ── Telegram bot wiring ── */
+function saveTelegram() {
+    const token = document.getElementById('tgToken')?.value.trim();
+    const chat = document.getElementById('tgChatId')?.value.trim();
+    if (!token || !chat) { showToast('Token and Chat ID are both required', 'error'); return; }
+    const c = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
+    c['telegram-token'] = token; c['telegram-chat-id'] = chat;
+    localStorage.setItem('nexus_credentials', JSON.stringify(c));
+    document.getElementById('tgStatus').innerHTML = '<span style="color:#4ade80">✔ Saved locally. Export as env vars before launching the bot.</span>';
+    AgentLog.success('integrations.telegram', 'Telegram credentials saved (browser storage only)');
+    showToast('Telegram credentials saved', 'success');
+}
+
+function tgCreds() {
+    const c = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
+    return { token: c['telegram-token'] || '', chat: c['telegram-chat-id'] || '' };
+}
+
+async function callTelegramApi(method, params) {
+    const { token } = tgCreds();
+    if (!token) return { ok: false, error: 'No bot token saved — use Save credentials first.' };
+    try {
+        const res = await fetchWithTimeout(`https://api.telegram.org/bot${token}/${method}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(params || {}),
+        }, 15000);
+        return await res.json();
+    } catch (e) {
+        return { ok: false, error: e.name === 'AbortError' ? 'Timeout' : e.message };
+    }
+}
+
+async function testTelegram() {
+    const out = document.getElementById('tgStatus');
+    out.textContent = 'Testing getMe…';
+    const r = await callTelegramApi('getMe', {});
+    if (r.ok) {
+        out.innerHTML = `<span style="color:#4ade80">✔ Bot online: @${r.result.username}</span>`;
+        AgentLog.success('integrations.telegram', `Bot @${r.result.username} reachable`);
+    } else {
+        out.innerHTML = `<span style="color:#f87171">✘ ${escHtml(r.error || r.description || 'failed')}</span>`;
+        AgentLog.error('integrations.telegram', `Connection test failed: ${r.error || r.description}`);
+    }
+}
+
+async function sendTgTest() {
+    const { chat } = tgCreds();
+    if (!chat) { showToast('Save Chat ID first', 'error'); return; }
+    const brand = State.settings.brand || 'Nexus';
+    const r = await callTelegramApi('sendMessage', {
+        chat_id: chat,
+        text: `🤖 Nexus test — engine: ${State.model}, brand: ${brand}. If you can read this, control from phone works. Try /help on the bot.`,
+    });
+    if (r.ok) { showToast('Test message sent to Telegram ✔', 'success'); AgentLog.success('integrations.telegram', 'Test message delivered', { chat }); }
+    else { showToast(`Send failed: ${r.error || r.description}`, 'error'); AgentLog.error('integrations.telegram', `Send failed: ${r.error || r.description}`, { chat }); }
+}
+
+/* ══════════════════════════════════════════════════════════════
    TOAST NOTIFICATIONS
 ══════════════════════════════════════════════════════════════ */
 function showToast(message, type = 'info') {
     const container = document.getElementById('toastContainer');
     const toast = document.createElement('div');
-    const icon = type === 'success' ? '✅' : 'ℹ️';
+    const icon = type === 'success' ? '✅' : type === 'error' ? '🚨' : 'ℹ️';
     toast.className = `toast toast-${type}`;
-    toast.innerHTML = `<span>${icon}</span> ${message}`;
+    toast.innerHTML = `<span>${icon}</span> ${escHtml(message)}`;
     container.appendChild(toast);
-    setTimeout(() => toast.remove(), 3500);
+    setTimeout(() => toast.remove(), type === 'error' ? 6000 : 3500);
 }
+
+/* Global safety net: any uncaught JS error or rejected promise is documented. */
+window.addEventListener('error', (e) => {
+    AgentLog.error('app.runtime', e.message || 'Uncaught script error',
+        e.filename ? `${e.filename}:${e.lineno}:${e.colno}` : '');
+});
+window.addEventListener('unhandledrejection', (e) => {
+    AgentLog.error('app.promise', 'Unhandled promise rejection', String(e.reason));
+});
 
 /* ══════════════════════════════════════════════════════════════
    SAVE DRAFT
@@ -1209,8 +1820,10 @@ document.getElementById('saveDraftBtn')?.addEventListener('click', () => {
 ══════════════════════════════════════════════════════════════ */
 (function init() {
     setGreeting();
+    loadSettings();
     initDashboard();
     renderQuickTemplates();
+    AgentLog.updateErrorBadge();
 
     // Populate Brand & Settings fields from state
     if (document.getElementById('brandName')) {
@@ -1578,10 +2191,17 @@ function publishNow() {
             const hasToken = tokenField && (saved[tokenField] || document.getElementById(tokenField)?.value);
             const icon = { instagram: 'ph-fill ph-instagram-logo', facebook: 'ph-fill ph-facebook-logo', youtube: 'ph-fill ph-youtube-logo', twitter: 'ph-fill ph-twitter-logo', linkedin: 'ph-fill ph-linkedin-logo', blogger: 'ph ph-globe-simple' }[platform] || 'ph ph-check';
 
+            const label = platform.charAt(0).toUpperCase() + platform.slice(1);
             if (hasToken) {
-                log.innerHTML += `<div class="log-entry log-success"><i class="${icon}"></i> <strong>${platform.charAt(0).toUpperCase() + platform.slice(1)}:</strong> Payload validated with saved token! Ready to push via Python daemon / webhook. ✓ <small style="margin-left:auto;opacity:.6">${new Date().toLocaleTimeString()}</small></div>`;
+                log.innerHTML += `<div class="log-entry log-success"><i class="${icon}"></i> <strong>${label}:</strong> Payload validated with saved credentials! Ready to push via Python daemon / webhook. ✓ <small style="margin-left:auto;opacity:.6">${new Date().toLocaleTimeString()}</small></div>`;
+                if (typeof AgentLog !== 'undefined') {
+                    AgentLog.info('publish', `${label}: payload validated and queued for publish`);
+                }
             } else {
-                log.innerHTML += `<div class="log-entry log-error"><i class="${icon}"></i> <strong>${platform.charAt(0).toUpperCase() + platform.slice(1)}:</strong> Missing credentials. Go to Connected Accounts to configure API token.</div>`;
+                log.innerHTML += `<div class="log-entry log-error"><i class="${icon}"></i> <strong>${label}:</strong> Missing credentials. Go to Connected Accounts to configure API token.</div>`;
+                if (typeof AgentLog !== 'undefined') {
+                    AgentLog.error('publish', `${platform}: publish FAILED — no access token stored`, { field: tokenField });
+                }
             }
         }, (i + 1) * 500);
     });
@@ -1981,4 +2601,87 @@ ${palettes}
 Object.assign(PAGE_TITLES, {
     accounts: 'Connected Accounts',
     canva:    'Canva Studio',
+    logs:     'Agent Error & Activity Logs',
+    tutorial: 'Tutorial — How to Use Nexus',
 });
+
+/* ══════════════════════════════════════════════════════════════
+   AGENT LOGS PAGE
+══════════════════════════════════════════════════════════════ */
+let logFilter = 'all';
+
+function setLogFilter(f, btn) {
+    logFilter = f;
+    document.querySelectorAll('#logFilterBar .tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+    renderAgentLogs();
+}
+
+function renderAgentLogs() {
+    const list = document.getElementById('agentLogList');
+    if (!list) return;
+    let entries = AgentLog.all().slice().reverse();
+    if (logFilter !== 'all') entries = entries.filter(e => e.level === logFilter);
+
+    const counts = { error: 0, warn: 0 };
+    AgentLog.all().forEach(e => { if (counts[e.level] !== undefined) counts[e.level]++; });
+    const stats = document.getElementById('logStats');
+    if (stats) stats.textContent = `${AgentLog.all().length} events • ${counts.error} errors • ${counts.warn} warnings`;
+
+    if (!entries.length) {
+        list.innerHTML = '<div class="log-empty">No log entries yet. The agent documents every action and failure here automatically.</div>';
+        return;
+    }
+    const ICONS = { info: 'ph-info', warn: 'ph-warning-circle', error: 'ph-x-circle', success: 'ph-check-circle' };
+    list.innerHTML = entries.map(e => `
+        <div class="agent-log-row lvl-${e.level}">
+            <span class="al-time">${new Date(e.ts).toLocaleString()}</span>
+            <span class="al-level"><i class="ph-fill ${ICONS[e.level] || 'ph-info'}"></i> ${e.level.toUpperCase()}</span>
+            <span class="al-src">${escHtml(e.source)}</span>
+            <span class="al-msg">${escHtml(e.message)}${e.detail ? `<details><summary>context</summary><pre>${escHtml(e.detail)}</pre></details>` : ''}</span>
+        </div>`).join('');
+}
+
+function clearAgentLogs() {
+    AgentLog.clear();
+    renderAgentLogs();
+    showToast('Agent logs cleared', 'success');
+}
+
+
+/* ══════════════════════════════════════════════════════════════
+   IN-APP TUTORIAL (guided steps + engine cheat-sheet)
+══════════════════════════════════════════════════════════════ */
+const TUTORIAL_STEPS = [
+    { title: 'Welcome to Nexus', body: 'Nexus is an AI-powered Social Media Manager. It generates platform-native content, plans ad campaigns (Meta Ads & Google Ads), builds calendars, and documents every agent action \u2014 including failures \u2014 in the Agent Logs page so nothing is ever lost.' },
+    { title: 'Step 1 \u2014 Set your brand profile', body: 'Go to Settings. Enter Brand Name, Niche, Audience and Tone, then pick your AI engine:\n\u2022 Google Antigravity \u2014 agentic handoff (uses the digital-marketer skill in this repo)\n\u2022 Cloud APIs \u2014 xAI Grok, Groq, OpenRouter (Hermes 4), Gemini, Claude\n\u2022 Local Models \u2014 LM Studio (Hermes/Llama GGUF) or Ollama\nSettings persist automatically in your browser.' },
+    { title: 'Step 2 \u2014 Connect accounts & providers', body: 'Open Connected Accounts. Paste API keys/tokens for each platform (Instagram Graph, Facebook Page, YouTube, X, LinkedIn, Blogger, Canva) and for cloud providers (xAI, Groq, OpenRouter, Gemini, Anthropic). Click Save, then Test Connections. Keys stay in your browser only \u2014 never sent to any Nexus server.' },
+    { title: 'Step 3 \u2014 Dispatch a task to the agent', body: 'On the AI Agent page, write one directive (e.g. "Launch campaign for our new AI scheduling feature"), tick platforms, choose tone and content type, then Dispatch. If your chosen engine fails (offline model, bad key, rate limit), Nexus retries with exponential backoff, fails over down the provider chain, logs the failure, and still delivers built-in template output so you are never blocked.' },
+    { title: 'Step 4 \u2014 Use the specialist hubs', body: 'Instagram/Facebook/YouTube/LinkedIn/Blog hubs generate carousel scripts, Reel scripts, ad copy, titles, polls and SEO outlines. Canva Studio creates visual design briefs + Canva AI prompts. Content Studio has caption, hook, hashtag, email, SEO and A/B tools. Trends shows what is hot right now.' },
+    { title: 'Step 5 \u2014 Schedule & calendar', body: 'Add posts to the Content Calendar. For hands-free automation use the scheduler command from Settings with Google Antigravity, or run daily_run.sh from the skill folder with LM Studio \u2014 both documented in the README Quick Start.' },
+    { title: 'Step 6 \u2014 Browser automation, MCP & Telegram', body: 'Browser Agent page: let the agent drive Chrome via Playwright/DevTools Protocol — navigate, snapshot, extract, screenshot, inspect console errors like a developer. Clicking/typing stays LOCKED until you tick "Grant Browser Actions Permission"; destructive targets (logout/delete account) are always refused. MCP & Integrations page: register agent/nexus_mcp.py in Google Antigravity, Claude Desktop or LM Studio so Hermes/Grok agents can call all 11 Nexus tools; connect your Telegram bot (token + chat id) to run everything from your phone with tap-to-approve security.' },
+    { title: 'Step 7 \u2014 Review agent health', body: 'Visit Agent Logs after every session. Errors (red) show exactly which provider failed and why; export the full JSON log and attach it when asking for support. A running app should be debuggable \u2014 that is the whole point of the error-report system.' },
+];
+
+let tutorialIndex = 0;
+
+function initTutorial() {
+    const dots = document.getElementById('tutorialDots');
+    if (dots) dots.textContent = `${tutorialIndex + 1} / ${TUTORIAL_STEPS.length}`;
+    const step = TUTORIAL_STEPS[tutorialIndex];
+    const t = document.getElementById('tutorialTitle');
+    const b = document.getElementById('tutorialBody');
+    if (t) t.textContent = step.title;
+    if (b) b.textContent = step.body;
+    const prev = document.getElementById('tutPrevBtn');
+    const next = document.getElementById('tutNextBtn');
+    if (prev) prev.disabled = tutorialIndex === 0;
+    if (next) next.textContent = tutorialIndex === TUTORIAL_STEPS.length - 1 ? 'Finish \u2713' : 'Next \u2192';
+}
+
+function tutNav(dir) {
+    if (dir > 0 && tutorialIndex === TUTORIAL_STEPS.length - 1) { switchPage('agent'); return; }
+    tutorialIndex = Math.max(0, Math.min(TUTORIAL_STEPS.length - 1, tutorialIndex + dir));
+    initTutorial();
+}
+
+function jumpTo(page) { switchPage(page); }

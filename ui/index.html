@@ -80,6 +80,18 @@
                 <li class="nav-item" data-page="analytics">
                     <a href="#" class="nav-link"><i class="ph ph-chart-line-up"></i><span>Analytics</span></a>
                 </li>
+                <li class="nav-item" data-page="browser">
+                    <a href="#" class="nav-link"><i class="ph-fill ph-browser"></i><span>Browser Agent</span><div class="nav-badge" style="background:linear-gradient(135deg,#0ea5e9,#2563eb)">CDP</div></a>
+                </li>
+                <li class="nav-item" data-page="integrations">
+                    <a href="#" class="nav-link"><i class="ph ph-plugs"></i><span>MCP & Integrations</span><div class="nav-badge" style="background:linear-gradient(135deg,#16a34a,#0ea5e9)">MCP</div></a>
+                </li>
+                <li class="nav-item" data-page="logs">
+                    <a href="#" class="nav-link"><i class="ph ph-warning-octagon"></i><span>Agent Logs</span><div class="nav-badge" id="logErrorBadge" style="background:linear-gradient(135deg,#dc2626,#f97316);display:none">0</div></a>
+                </li>
+                <li class="nav-item" data-page="tutorial">
+                    <a href="#" class="nav-link"><i class="ph ph-graduation-cap"></i><span>Tutorial</span></a>
+                </li>
                 <li class="nav-item" data-page="settings">
                     <a href="#" class="nav-link"><i class="ph ph-sliders-horizontal"></i><span>Settings</span></a>
                 </li>
@@ -670,12 +682,17 @@
                                             <option value="deepseek">Deepseek</option>
                                             <option value="qwen">Qwen (DashScope)</option>
                                             <option value="openai">OpenAI (GPT-4o)</option>
+                                            <option value="openrouter">OpenRouter (Hermes, etc.)</option>
+                                            <option value="xai">xAI Grok</option>
                                         </select>
                                     </div>
                                     <div class="form-field">
-                                        <label>API Key</label>
+                                        <label>API Key (saved to browser storage)</label>
                                         <input type="password" id="cloudApiKey" placeholder="sk-...">
                                     </div>
+                                    <button class="btn btn-ghost btn-sm" onclick="saveProviderKey()" type="button"><i class="ph ph-floppy-disk"></i> Save Key for Provider</button>
+                                    <button class="btn btn-ghost btn-sm" onclick="pingProvider()" type="button"><i class="ph ph-lightning"></i> Test Provider</button>
+                                    <span id="providerTestResult" style="font-size:.8rem;margin-left:8px;"></span>
                                 </div>
                                 <div class="form-row" style="margin-top: 10px;">
                                     <div class="form-field">
@@ -739,6 +756,158 @@
                         </div>
 
                         <button class="btn btn-primary" id="saveSettingsBtn"><i class="ph ph-floppy-disk"></i> Save Settings</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ PAGE: BROWSER AGENT ═══ -->
+            <div class="page-content" id="page-browser">
+                <div class="glass-card fade-up" style="padding:20px; margin-bottom:18px;">
+                    <div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                        <h3><i class="ph-fill ph-browser"></i> Browser Automation &amp; DevTools Skill</h3>
+                        <span class="chip" id="browserPermChip">🔒 Read-only mode</span>
+                    </div>
+                    <p class="helper-text">The agent can drive a real Chrome/Chromium session using <b>Playwright</b> or the raw <b>Chrome DevTools Protocol</b> — inspecting console errors, network timings and DOM like a developer. State-changing actions (click/type/post) are blocked until you grant permission below, and every command is written to an audit trail (<code>logs/browser_audit.jsonl</code> via <code>agent/browser_automation.py</code>).</p>
+                    <label style="display:flex;align-items:center;gap:10px;margin:14px 0;padding:12px;background:rgba(255,255,59,0.05);border:1px solid rgba(255,255,59,0.2);border-radius:10px;cursor:pointer;">
+                        <input type="checkbox" id="browserActionsPermission" style="width:18px;height:18px;">
+                        <span><b>Grant Browser Actions Permission</b> — allow the agent to click, type and publish on pages I have approved. Revocable anytime. Unauthorized sites remain blocked by the deny-list (logout/delete-account etc.).</span>
+                    </label>
+                </div>
+
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
+                    <div class="glass-card fade-up" style="padding:20px;">
+                        <div class="card-header"><h3><i class="ph ph-compass"></i> Command Console</h3></div>
+                        <div class="form-field">
+                            <label>URL to browse</label>
+                            <input type="text" id="browserUrl" placeholder="https://example.com" value="https://example.com">
+                        </div>
+                        <div class="form-field">
+                            <label>CSS selector (for extract / act)</label>
+                            <input type="text" id="browserSelector" placeholder="e.g. h1, .post-title, button#publish">
+                        </div>
+                        <div class="form-field" id="browserValueField" style="display:none;">
+                            <label>Text to type</label>
+                            <input type="text" id="browserTypeValue" placeholder="Caption text…">
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+                            <button class="btn btn-ghost btn-sm" onclick="browserCmd('navigate')"><i class="ph ph-arrow-right"></i> Navigate</button>
+                            <button class="btn btn-ghost btn-sm" onclick="browserCmd('snapshot')"><i class="ph ph-tree-structure"></i> Snapshot</button>
+                            <button class="btn btn-ghost btn-sm" onclick="browserCmd('extract')"><i class="ph ph-brackets-curly"></i> Extract</button>
+                            <button class="btn btn-ghost btn-sm" onclick="browserCmd('screenshot')"><i class="ph ph-camera"></i> Screenshot</button>
+                            <button class="btn btn-ghost btn-sm" onclick="browserCmd('devtools-console')"><i class="ph ph-code"></i> DevTools: Console</button>
+                            <button class="btn btn-ghost btn-sm" onclick="browserCmd('devtools-perf')"><i class="ph ph-gauge"></i> DevTools: Perf</button>
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px dashed var(--c-border);">
+                            <span style="font-size:.75rem;opacity:.6;align-self:center;">Actions (need permission):</span>
+                            <button class="btn btn-sm" style="background:var(--accent-grad);color:#fff;" onclick="browserCmd('act-click')"><i class="ph ph-cursor-click"></i> Click selector</button>
+                            <button class="btn btn-sm" style="background:var(--accent-grad);color:#fff;" onclick="browserCmd('act-type')"><i class="ph ph-keyboard"></i> Type into selector</button>
+                        </div>
+                    </div>
+                    <div class="glass-card fade-up" style="padding:20px;">
+                        <div class="card-header"><h3><i class="ph ph-terminal-window"></i> Output</h3>
+                            <span style="flex:1"></span>
+                            <button class="btn btn-ghost btn-sm" onclick="clearBrowserOut()"><i class="ph ph-trash"></i></button>
+                        </div>
+                        <pre id="browserOutput" style="max-height:420px;overflow:auto;background:rgba(0,0,0,.35);border-radius:10px;padding:14px;font-size:.78rem;white-space:pre-wrap;">Waiting for command… Tip: with no local relay running, commands show the exact CLI equivalent and open a simulated result so you can learn the flow.</pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ PAGE: MCP & INTEGRATIONS ═══ -->
+            <div class="page-content" id="page-integrations">
+                <div class="glass-card fade-up" style="padding:20px; margin-bottom:18px;">
+                    <div class="card-header"><h3><i class="ph ph-plugs"></i> MCP Server — connect Nexus to any agent host</h3></div>
+                    <p class="helper-text">Nexus ships an <b>Model Context Protocol</b> server (<code>agent/nexus_mcp.py</code>, zero dependencies) that exposes 11 tools — content generation, campaign planning, hashtag research, browser automation, DevTools inspection, video rendering and Telegram notify — to <b>Google Antigravity, Claude Desktop, LM Studio (Hermes), Cursor, VS Code Copilot</b> and remote-MCP clients via Grok. This is the extension point for future tools (Adobe After Effects, editing software, CRM…).</p>
+                    <div class="schedule-code-block" style="margin-top:12px;">
+                        <div class="code-header"><span>Register in any MCP client (stdio)</span><button onclick="copyMcpCmd()" class="btn btn-ghost btn-sm" type="button"><i class="ph ph-copy"></i></button></div>
+                        <code id="mcpCmdBlock">{ "mcpServers": { "nexus": { "command": "python3", "args": ["PATH_TO_REPO/agent/nexus_mcp.py"] } } }</code>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+                        <button class="btn btn-ghost btn-sm" onclick="showMcpTools()"><i class="ph ph-list-bullets"></i> List exposed tools</button>
+                        <button class="btn btn-ghost btn-sm" onclick="jumpTo('tutorial')"><i class="ph ph-book-open"></i> Setup guide in Tutorial</button>
+                    </div>
+                    <pre id="mcpToolsOut" class="hidden" style="margin-top:12px;background:rgba(0,0,0,.3);padding:12px;border-radius:10px;font-size:.78rem;white-space:pre-wrap;"></pre>
+                </div>
+
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
+                    <div class="glass-card fade-up" style="padding:20px;">
+                        <div class="card-header"><h3><i class="ph-fill ph-telegram-logo" style="color:#229ED9"></i> Telegram Bot Control</h3></div>
+                        <p class="helper-text">Run the whole manager from your phone: <code>/generate</code>, <code>/plan</code>, <code>/browse</code>, <code>/shot</code>, <code>/post</code>, <code>/logs</code>. Dangerous commands require an inline <b>✅ Approve</b> tap within 5 minutes. Script: <code>agent/telegram_bot.py</code>.</p>
+                        <div class="form-field">
+                            <label>Bot Token (@BotFather → /newbot)</label>
+                            <input type="password" id="tgToken" placeholder="123456:ABC-DEF…" autocomplete="off">
+                        </div>
+                        <div class="form-field">
+                            <label>Your Chat ID (send /start to bot, then check getUpdates)</label>
+                            <input type="text" id="tgChatId" placeholder="e.g. 555123456">
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            <button class="btn btn-primary btn-sm" onclick="saveTelegram()" type="button"><i class="ph ph-floppy-disk"></i> Save credentials</button>
+                            <button class="btn btn-ghost btn-sm" onclick="testTelegram()" type="button"><i class="ph ph-lightning"></i> Test connection</button>
+                            <button class="btn btn-ghost btn-sm" onclick="sendTgTest()" type="button"><i class="ph ph-paper-plane-tilt"></i> Send test message</button>
+                        </div>
+                        <div id="tgStatus" style="font-size:.8rem;margin-top:10px;"></div>
+                        <p style="font-size:.75rem;opacity:.6;margin-top:10px;">Then run: <code>export TELEGRAM_BOT_TOKEN=… TELEGRAM_CHAT_ID=… && python3 agent/telegram_bot.py</code> — token stays in your browser storage only.</p>
+                    </div>
+
+                    <div class="glass-card fade-up" style="padding:20px;">
+                        <div class="card-header"><h3><i class="ph ph-film-strip"></i> Creative Studio Bridge (After Effects & editors)</h3></div>
+                        <p class="helper-text">Roadmap integration for designing posters/videos for clients and auto-posting them:</p>
+                        <ul style="font-size:.85rem;line-height:1.9;padding-left:18px;">
+                            <li><b>Now:</b> <code>render_video</code> MCP tool stitches poster images into MP4 via FFmpeg.</li>
+                            <li><b>Next:</b> Adobe After Effects via CEP/UXP extension calling the Nexus MCP server (template comp → data-driven text/logo → Render Queue → MP4).</li>
+                            <li><b>Also:</b> Canva Connect API (already wired in Canva Studio page) for client brand-kit posters.</li>
+                            <li><b>Then:</b> approved videos queue to Calendar → publish through Postiz/self-hosted relay (open source, AGPL).</li>
+                        </ul>
+                        <div class="schedule-code-block" style="margin-top:10px;">
+                            <div class="code-header"><span>AE ExtendScript sketch</span></div>
+                            <code style="font-size:.72rem;">// In AE: fetch brief from Nexus MCP → set comp text layers → queue render
+var res = $.http.get("http://localhost:8957/brief"); // supergateway bridge</code>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ PAGE: AGENT LOGS ═══ -->
+            <div class="page-content" id="page-logs">
+                <div class="glass-card fade-up" style="padding:20px;">
+                    <div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                        <h3><i class="ph ph-warning-octagon"></i> Agent Error &amp; Activity Report</h3>
+                        <span id="logStats" style="font-size:.8rem;opacity:.7;"></span>
+                        <span style="flex:1"></span>
+                        <button class="btn btn-ghost btn-sm" onclick="AgentLog.exportJson()"><i class="ph ph-download-simple"></i> Export JSON</button>
+                        <button class="btn btn-ghost btn-sm" onclick="clearAgentLogs()"><i class="ph ph-trash"></i> Clear</button>
+                    </div>
+                    <div id="logFilterBar" style="display:flex;gap:8px;margin:10px 0 16px;">
+                        <button class="tab-btn active" onclick="setLogFilter('all', this)">All</button>
+                        <button class="tab-btn" onclick="setLogFilter('error', this)">Errors</button>
+                        <button class="tab-btn" onclick="setLogFilter('warn', this)">Warnings</button>
+                        <button class="tab-btn" onclick="setLogFilter('success', this)">Successes</button>
+                        <button class="tab-btn" onclick="setLogFilter('info', this)">Info</button>
+                    </div>
+                    <div id="agentLogList" class="agent-log-list"></div>
+                    <p style="font-size:.8rem;opacity:.6;margin-top:14px;">Every AI dispatch, provider retry, failover, publish attempt and uncaught runtime error is documented here automatically. Attach the exported JSON when reporting issues.</p>
+                </div>
+            </div>
+
+            <!-- ═══ PAGE: TUTORIAL ═══ -->
+            <div class="page-content" id="page-tutorial">
+                <div class="glass-card fade-up tutorial-card" style="padding:28px;">
+                    <div class="card-header"><h3><i class="ph ph-graduation-cap"></i> How to Use Nexus — Guided Tutorial</h3></div>
+                    <div class="tutorial-progress"><span id="tutorialDots">1 / 7</span></div>
+                    <h2 class="tutorial-title" id="tutorialTitle">Welcome to Nexus</h2>
+                    <pre class="tutorial-body" id="tutorialBody"></pre>
+                    <div style="display:flex;gap:10px;margin-top:20px;">
+                        <button class="btn btn-ghost" id="tutPrevBtn" onclick="tutNav(-1)">&larr; Back</button>
+                        <button class="btn btn-primary" id="tutNextBtn" onclick="tutNav(1)">Next &rarr;</button>
+                    </div>
+                    <div class="tutorial-jump">
+                        <span>Jump to:</span>
+                        <button class="btn btn-ghost btn-sm" onclick="jumpTo('agent')">AI Agent</button>
+                        <button class="btn btn-ghost btn-sm" onclick="jumpTo('accounts')">Connected Accounts</button>
+                        <button class="btn btn-ghost btn-sm" onclick="jumpTo('calendar')">Calendar</button>
+                        <button class="btn btn-ghost btn-sm" onclick="jumpTo('logs')">Agent Logs</button>
+                        <button class="btn btn-ghost btn-sm" onclick="jumpTo('settings')">Settings</button>
                     </div>
                 </div>
             </div>
