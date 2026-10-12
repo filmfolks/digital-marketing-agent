@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # The agent layer is stdlib-only by design, so there is nothing to install.
+      - name: Syntax + integrity checks
+        run: ./scripts/run_tests.sh --lint
+
+      - name: Python test suite
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Front-end test suite
+        run: node tests/test_ui.mjs
+
+  ui-smoke:
+    # Proves the UI actually boots in a real browser — a syntax check cannot catch
+    # a temporal-dead-zone error or a missing event listener.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Verify a browser is available
+        run: google-chrome --version || chromium --version || chromium-browser --version
+
+      - name: Headless UI smoke test
+        run: node scripts/smoke_ui.mjs
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots
+          path: shots/smoke-*.png
+          if-no-files-found: ignore
+
+  relay-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Boot the relay and assert its security contract
+        run: |
+          set -e
+          python agent/nexus_relay.py --port 8791 --token citoken &
+          RELAY_PID=$!
+          trap 'kill $RELAY_PID 2>/dev/null || true' EXIT
+          sleep 2
+
+          echo "health is unauthenticated"
+          curl -sf http://127.0.0.1:8791/health | grep -q nexus-relay
+
+          echo "token is required for queue access"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8791/queue)" = "401"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Nexus-Token: citoken' http://127.0.0.1:8791/queue)" = "200"
+
+          echo "remote origins refused, local origins accepted"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS -H 'Origin: https://evil.example.com' http://127.0.0.1:8791/browser)" = "403"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS -H 'Origin: http://localhost:8080' http://127.0.0.1:8791/browser)" = "204"
+
+          echo "browser actions blocked without explicit permission"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H 'X-Nexus-Token: citoken' -d '{"cmd":"act-click","selector":"#x"}' http://127.0.0.1:8791/browser)" = "403"
+
+          echo "publish dry run validates without touching the network"
+          curl -sf -X POST -H 'Content-Type: application/json' -H 'X-Nexus-Token: citoken' \
+            -d '{"content":"ci","platforms":["facebook"],"dry_run":true}' \
+            http://127.0.0.1:8791/publish | grep -q '"validated"'
+
+          echo "relay contract verified ✔"

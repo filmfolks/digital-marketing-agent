@@ -35,7 +35,7 @@ SETUP (2 minutes):
   2. Message your bot once, then:  curl "https://api.telegram.org/bot<TOKEN>/getUpdates"
      → copy your chat id.
   3. export TELEGRAM_BOT_TOKEN=... ; export TELEGRAM_CHAT_ID=...
-  4. python3 telegram_bot.py            (or run under systemd/nexus_server.py)
+  4. python3 agent/telegram_bot.py      (or run it under systemd/launchd)
 
 SECURITY: only TELEGRAM_CHAT_ID (and any ids in NEXUS_TG_ALLOWLIST comma
 list) may issue commands; everyone else gets a polite refusal that is logged.
@@ -188,8 +188,10 @@ def execute_pending(pid, chat_id):
                                            "user_permission_granted": True})
     elif cmd.startswith("publish|"):
         _, platform, text = cmd.split("|", 2)
-        result = {"ok": True, "note": f"Queued '{text[:60]}' for {platform} "
-                                      "(live relay connects via Postiz/API keys in Settings)"}
+        # BUG FIX: this used to return a hard-coded {"ok": True, "note": "Queued…"}
+        # and never publish anything — the bot reported success for a post that
+        # did not exist. It now runs the real publisher and reports the truth.
+        result = call_tool("publish_post", {"platform": platform, "text": text})
     else:
         result = {"ok": False, "error": f"Unknown pending command shape: {cmd}"}
     pending.pop(pid, None); save_pending(pending)
@@ -210,7 +212,10 @@ HELP = (
     "/shot <url> – screenshot a page\n"
     "/act click <selector> | /act type <selector> <text>\n"
     "     ↳ requires ✅ tap-to-approve\n"
-    "/post <platform> <text> – queue a post (needs approval)\n"
+    "/post <instagram|facebook|twitter|linkedin|blogger> <text> – needs ✅ approval\n"
+    "/queue – queued & scheduled posts\n"
+    "/approve <id> – approve a pending action\n"
+    "/reject <id> – reject it (logged)\n"
     "/logs [n] – recent errors/warnings\n"
     "/help – this message"
 )
@@ -310,12 +315,48 @@ def cmd_act(chat_id, arg):
 
 
 def cmd_post(chat_id, arg):
-    m = re.match(r"(instagram|facebook|twitter|linkedin|youtube)\s+(.+)", arg or "", re.S | re.I)
+    m = re.match(r"(instagram|facebook|twitter|linkedin|blogger)\s+(.+)", arg or "", re.S | re.I)
     if not m:
         return send(chat_id, "Usage: `/post instagram Today's launch teaser copy…`")
     platform, text = m.group(1).lower(), m.group(2)
     request_approval(chat_id, f"publish|{platform}|{text}",
                      f"Publish to {platform}: \"{text[:80]}\"", f"publish:{platform}")
+
+
+def cmd_queue(chat_id, _arg):
+    """List queued/scheduled posts (the handler was documented but never existed,
+    so /queue answered "Unknown command" )."""
+    r = call_tool("read_publish_queue", {"limit": 15})
+    jobs = r.get("jobs", [])
+    if not jobs:
+        return send(chat_id, "📭 The publish queue is empty.")
+    lines = []
+    for j in jobs:
+        when = j.get("schedule") or "immediate"
+        preview = (j.get("content") or "")[:60].replace("\n", " ")
+        lines.append(f"• `{j.get('id')}` [{j.get('status')}] {','.join(j.get('platforms', []))} — {when}\n  _{preview}_")
+    send(chat_id, "📦 *Publish queue*\n" + "\n".join(lines))
+
+
+def cmd_approve(chat_id, arg):
+    pid = (arg or "").strip()
+    if not pid:
+        pend = load_pending()
+        if not pend:
+            return send(chat_id, "Nothing is waiting for approval.")
+        return send(chat_id, "Usage: `/approve <id>`. Pending: " + ", ".join(f"`{k}`" for k in pend))
+    execute_pending(pid, chat_id)
+
+
+def cmd_reject(chat_id, arg):
+    pid = (arg or "").strip()
+    pending = load_pending()
+    item = pending.pop(pid, None)
+    save_pending(pending)
+    if not item:
+        return send(chat_id, f"No pending request `{pid}`.")
+    audit(chat_id, item["command"], "rejected_by_user")
+    send(chat_id, f"🗑 Rejected & logged: {item['summary']}")
 
 
 def cmd_logs(chat_id, arg):
@@ -344,6 +385,7 @@ HANDLERS = {
     "status": cmd_status, "generate": cmd_generate, "plan": cmd_plan,
     "hashtags": cmd_hashtags, "browse": cmd_browse, "shot": cmd_shot,
     "act": cmd_act, "post": cmd_post, "logs": cmd_logs,
+    "queue": cmd_queue, "approve": cmd_approve, "reject": cmd_reject,
 }
 
 

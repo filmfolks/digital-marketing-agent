@@ -131,6 +131,18 @@ body {
     transition: var(--transition);
 }
 .sidebar-toggle:hover { color: var(--c-text); background: rgba(255,255,255,.05); }
+.mobile-nav-btn { display: none; }
+.app-shell.sidebar-collapsed { grid-template-columns: 72px 1fr; }
+.app-shell.sidebar-collapsed .logo-text,
+.app-shell.sidebar-collapsed .nav-section-label,
+.app-shell.sidebar-collapsed .nav-link span,
+.app-shell.sidebar-collapsed .nav-badge,
+.app-shell.sidebar-collapsed .status-text { display: none; }
+.app-shell.sidebar-collapsed .nav-link { justify-content: center; padding: 10px; }
+.sidebar-backdrop {
+    display: none;
+    position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 20;
+}
 
 .nav-section-label {
     font-size: 10px;
@@ -1042,3 +1054,168 @@ select option { background: #1a1a24; }
 
 /* ═══ ERROR TOAST ═══ */
 .toast.toast-error { border-color: rgba(220,38,38,.45); background: linear-gradient(135deg, rgba(60,10,10,.95), rgba(30,8,8,.95)); }
+
+.notif-panel {
+    position: absolute; right: 28px; top: calc(var(--topbar-h) + 8px);
+    width: min(360px, calc(100vw - 24px)); max-height: 360px; overflow: auto;
+    z-index: 40; padding: 12px; display: none;
+}
+.notif-panel.open { display: block; }
+.notif-item { padding: 10px 8px; border-bottom: 1px solid var(--c-border); font-size: 13px; }
+.notif-item:last-child { border-bottom: none; }
+.ppill-tk input:checked + span { background: rgba(255,255,255,.08); }
+
+@media (max-width: 900px) {
+    .app-shell { grid-template-columns: 1fr; }
+    .sidebar {
+        position: fixed; left: 0; top: 0; z-index: 30;
+        transform: translateX(-105%); width: min(280px, 86vw);
+        background: var(--c-surface); height: 100vh;
+    }
+    .app-shell.mobile-open .sidebar { transform: translateX(0); }
+    .app-shell.mobile-open .sidebar-backdrop { display: block; }
+    .mobile-nav-btn { display: grid; }
+    .top-bar { padding: 0 14px; }
+    .topbar-model-selector span, .avatar-chip span { display: none; }
+    .kpi-grid, .dash-lower, .agent-layout, .create-layout { grid-template-columns: 1fr !important; }
+    body { overflow: auto; }
+    .main-area { overflow: auto; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   v3 ADDITIONS — workflow, queue, metrics, palette, relay status
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Extra status badges for the approval workflow ───────────── */
+.st-approved  { background: rgba(37,99,235,.14); color: #93c5fd; }
+.st-published { background: rgba(22,163,74,.16); color: var(--c-green-lt); }
+
+/* ── Danger button variant ───────────────────────────────────── */
+.btn-danger { color: #f87171 !important; border-color: rgba(239,68,68,.28) !important; }
+.btn-danger:hover { background: rgba(239,68,68,.12) !important; color: #fca5a5 !important; }
+
+/* ── Text-style link button ──────────────────────────────────── */
+.link-btn {
+    background: none; border: none; padding: 0; cursor: pointer;
+    color: var(--c-purple-lt); font: inherit; text-decoration: underline;
+    text-underline-offset: 2px;
+}
+.link-btn:hover { color: #c4b5fd; }
+
+kbd {
+    display: inline-block; padding: 1px 6px; border-radius: 5px;
+    background: rgba(255,255,255,.08); border: 1px solid var(--c-border);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78em;
+}
+
+/* ── Relay status chip (sidebar footer) ──────────────────────── */
+.relay-chip {
+    margin-top: 10px; font-size: 11px; line-height: 1.4;
+    color: var(--c-text-2); padding: 7px 10px; border-radius: var(--radius-sm);
+    background: rgba(255,255,255,.03); border: var(--glass-border);
+    word-break: break-word;
+}
+
+/* ── Content action bar under each generated output ─────────── */
+.content-actions {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px;
+    padding-top: 14px; border-top: var(--glass-border);
+}
+
+/* ── Per-output utility buttons ──────────────────────────────── */
+.error-block { border-color: rgba(239,68,68,.3) !important; color: #fca5a5; }
+
+/* ── Calendar: clickable events, overflow, summary ──────────── */
+.cal-event { cursor: pointer; transition: var(--transition); }
+.cal-event:hover { filter: brightness(1.25); transform: translateX(2px); }
+.cal-event:focus-visible { outline: 2px solid var(--c-purple-lt); outline-offset: 1px; }
+.cal-more { font-size: 10px; color: var(--c-text-2); padding: 2px 6px; }
+
+/* ── Calendar post detail drawer ─────────────────────────────── */
+.post-detail { margin-top: 22px; padding: 22px; }
+.detail-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0 16px; }
+.detail-body { max-height: 340px; overflow-y: auto; }
+.detail-history { margin-top: 16px; font-size: 12px; color: var(--c-text-2); }
+.detail-history ul { margin: 6px 0 0 18px; }
+.detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; padding-top: 16px; border-top: var(--glass-border); }
+
+/* ── Analytics: metrics table + insights ────────────────────── */
+.metrics-import-card, .insights-card { grid-column: 1 / -1; }
+.metrics-table-wrap { overflow-x: auto; margin-top: 14px; border-radius: var(--radius-sm); }
+.metrics-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 900px; }
+.metrics-table th, .metrics-table td {
+    padding: 9px 12px; text-align: right; white-space: nowrap;
+    border-bottom: 1px solid var(--c-border);
+}
+.metrics-table th:first-child, .metrics-table td:first-child { text-align: left; }
+.metrics-table thead th {
+    background: rgba(255,255,255,.04); color: var(--c-text-2);
+    font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    position: sticky; top: 0;
+}
+.metrics-table tbody tr:hover { background: rgba(255,255,255,.03); }
+.metric-na { color: var(--c-text-3); }
+
+/* ── Trend radar: honesty note + analysis panel ─────────────── */
+.trend-source-note {
+    display: inline-block; margin-left: 6px; padding: 2px 8px; border-radius: 10px;
+    background: rgba(251,191,36,.12); color: #fbbf24; font-size: 11px; font-weight: 600;
+}
+.trend-analysis-card { margin-top: 22px; }
+
+/* ── UTM builder ─────────────────────────────────────────────── */
+.utm-layout { display: block; }
+.utm-output {
+    display: block; padding: 12px; border-radius: var(--radius-sm);
+    background: rgba(0,0,0,.35); border: var(--glass-border);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px; color: var(--c-green-lt);
+    white-space: pre-wrap; word-break: break-all; min-height: 46px;
+}
+
+/* ── Publish queue ───────────────────────────────────────────── */
+.queue-section .publish-log { max-height: 320px; overflow-y: auto; }
+.queue-meta { font-size: 12px; color: var(--c-text-2); margin-top: 4px; }
+.log-entry .chip { margin-left: 8px; }
+
+/* ── Command palette ─────────────────────────────────────────── */
+.palette-overlay {
+    position: fixed; inset: 0; z-index: 5000;
+    background: rgba(5,5,10,.65); backdrop-filter: blur(6px);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding-top: 12vh;
+}
+.palette-card { width: min(620px, 92vw); padding: 14px; }
+.palette-card input {
+    width: 100%; padding: 12px 14px; border-radius: var(--radius-sm);
+    background: rgba(0,0,0,.35); border: var(--glass-border);
+    color: var(--c-text); font: inherit; font-size: 15px; outline: none;
+}
+.palette-card input:focus { border-color: rgba(124,58,237,.5); }
+.palette-results { margin-top: 10px; max-height: 52vh; overflow-y: auto; }
+.palette-item {
+    display: flex; justify-content: space-between; gap: 12px; align-items: center;
+    padding: 10px 12px; border-radius: var(--radius-sm); cursor: pointer; font-size: 14px;
+}
+.palette-item.active, .palette-item:hover { background: rgba(124,58,237,.18); }
+.palette-item.disabled { color: var(--c-text-3); cursor: default; }
+.palette-hint { font-size: 11px; color: var(--c-text-2); text-transform: uppercase; letter-spacing: .05em; }
+
+/* ── Accessibility: visible focus everywhere + reduced motion ─ */
+:focus-visible { outline: 2px solid var(--c-purple-lt); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* ── Responsive: metrics table + palette on small screens ───── */
+@media (max-width: 720px) {
+    .palette-overlay { padding-top: 6vh; }
+    .post-detail { padding: 16px; }
+    .content-actions { gap: 6px; }
+}

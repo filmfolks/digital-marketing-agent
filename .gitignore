@@ -1,14 +1,82 @@
+# ==============================================================================
+# Nexus — .gitignore
+#
+# The rule of thumb for this repo: anything under logs/ that the app writes at
+# runtime may contain credentials, session cookies or post content. None of it
+# belongs in git history. Verify this file before your first push.
+# ==============================================================================
+
+# ── OS / editor cruft ─────────────────────────────────────────────────────────
 .DS_Store
-*.log
-logs/*.jsonl
-output/
-shots/*.png
+**/.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+# Real environment file (see .env.example for the template)
 .env
+.env.local
+
+# Credentials in the web root — use the UI's Connected Accounts page instead.
+# credentials.example.js stays tracked as the template.
+ui/credentials.js
+credentials.js
+
+# ── logs/ — audit trails, tokens and browser sessions ─────────────────────────
+# These are written at runtime and MUST NOT be committed:
+#   browser_profile/     live Chrome profile: cookies + logged-in sessions
+#   browser_session.json remembered page (URL + title)
+#   publish_queue.json   scheduled jobs INCLUDING plaintext platform tokens
+#   publish_job.json     in-flight publish hand-off (content + credentials)
+#   telegram_pending.json pending approval requests
+logs/*.json
+logs/*.jsonl
+logs/browser_profile/
+logs/browser_session.json
+logs/publish_queue.json
+logs/publish_job.json
+logs/telegram_pending.json
+logs/telegram_audit.jsonl
+logs/publish_audit.jsonl
+logs/browser_audit.jsonl
+logs/*.log
+
+# Keep the directory itself in the repo so a fresh clone has a writable logs/.
+!logs/.gitkeep
+
+# ── Generated output ──────────────────────────────────────────────────────────
+output/
+
+# ── Screenshots from the browser skill ────────────────────────────────────────
+shots/*.png
+shots/*.jpg
+shots/*.jpeg
+shots/*.webp
+# Keep the directory itself.
+!shots/.gitkeep
+
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
-node_modules/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 .venv/
 venv/
-credentials.js
-ui/credentials.js
+env/
+*.egg-info/
+
+# Test artifacts
+tests/_tmp_session.json
+# Headless Chrome profile created by scripts/smoke_ui.mjs
+.smoke-chrome-profile/
+
+# ── Node / front-end tooling ──────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-store/

@@ -6,13 +6,26 @@
 /* ══════════════════════════════════════════════════════════════
    APP STATE
 ══════════════════════════════════════════════════════════════ */
-const savedSettings = JSON.parse(localStorage.getItem('nexus_settings') || '{}');
-const savedEvents = JSON.parse(localStorage.getItem('nexus_calendar_events') || '[]');
-const savedAI = JSON.parse(localStorage.getItem('nexus_ai_config') || '{}');
+function safeJson(key, fallback) {
+    try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return fallback;
+        return JSON.parse(raw);
+    } catch {
+        return fallback;
+    }
+}
+
+const savedSettingsWrap = safeJson('nexus_settings', {});
+const savedSettings = savedSettingsWrap.settings && typeof savedSettingsWrap.settings === 'object'
+    ? savedSettingsWrap.settings
+    : savedSettingsWrap;
+const savedEvents = Array.isArray(safeJson('nexus_calendar_events', [])) ? safeJson('nexus_calendar_events', []) : [];
+const savedAI = safeJson('nexus_ai_config', {});
 
 const State = {
     currentPage: 'dashboard',
-    model: savedAI.provider || 'local',      // antigravity | local | cloud | builtin
+    model: savedAI.provider || savedSettingsWrap.model || 'local',      // antigravity | local | cloud | builtin
     lmStudioUrl: savedAI.localUrl || 'http://localhost:1234/v1',
     settings: {
         brand: savedSettings.brand || 'My Brand',
@@ -92,35 +105,56 @@ const AgentLog = (() => {
 })();
 
 /* ══════════════════════════════════════════════════════════════
-   MULTI-PROVIDER AGENT ENGINE
-   Supported backends (all OpenAI-compatible chat completions):
-     • Local:  LM Studio (Hermes models via LM Studio), Ollama
-     • Cloud:  xAI Grok, Groq, OpenRouter (any model incl. Hermes),
-               Google Gemini (OpenAI-compat endpoint), Anthropic Claude
-     • Agentic: Google Antigravity skill workflow (prompt handoff)
-   Features: timeout control, exponential-backoff retries, automatic
-   provider failover chain, and full documentation of failures.
-══════════════════════════════════════════════════════════════ */
-const PROVIDERS = {
-    'lmstudio':   { label: 'LM Studio (local)',  baseUrl: 'http://localhost:1234/v1',           needsKey: false, kind: 'local' },
-    'ollama':     { label: 'Ollama (local)',     baseUrl: 'http://localhost:11434/v1',          needsKey: false, kind: 'local' },
-    'xai':        { label: 'xAI Grok',           baseUrl: 'https://api.x.ai/v1',                needsKey: true,  kind: 'cloud', model: 'grok-4' },
-    'openrouter': { label: 'OpenRouter',         baseUrl: 'https://openrouter.ai/api/v1',       needsKey: true,  kind: 'cloud', model: 'nousresearch/hermes-4-405b' },
-    'groq':       { label: 'Groq',               baseUrl: 'https://api.groq.com/openai/v1',     needsKey: true,  kind: 'cloud', model: 'llama-3.3-70b-versatile' },
-    'gemini':     { label: 'Google Gemini',      baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', needsKey: true, kind: 'cloud', model: 'gemini-2.5-flash' },
-    'anthropic':  { label: 'Anthropic Claude',   baseUrl: 'https://api.anthropic.com/v1',       needsKey: true,  kind: 'cloud', model: 'claude-sonnet-4-20250514' },
-};
+   PROVIDER ADAPTER
+   The routing engine itself lives in ai-client.js (window.NexusAI):
+   ONE registry, ONE credential store, ONE retry/fail-over
+   implementation. These thin helpers exist only so the existing
+   Settings markup and inline onclick handlers keep working.
 
+   BUG FIX (was critical):
+   • script.js used to carry a *second*, divergent provider table plus
+     an entire retry/fail-over engine (`runAgent`) that nothing ever
+     called — so the fail-over the docs promised never actually ran.
+   • Keys saved with "Save Key for Provider" went into
+     `nexus_credentials[prov-<id>-key]` while generation read
+     `nexus_ai_config.cloudApiKey`; unless you also pressed
+     "Save Settings" the engine saw no key and silently fell back to
+     templates. Both now read the same store.
+══════════════════════════════════════════════════════════════ */
+const PROVIDERS = Object.fromEntries(
+    Object.entries(window.NexusProviders || {}).map(([id, p]) => [id, {
+        label: p.label,
+        baseUrl: p.baseUrl,
+        model: p.model,
+        needsKey: p.needsKey,
+        kind: p.kind,
+        native: p.dialect === 'anthropic',
+    }])
+);
+
+/** Resolved provider config (registry defaults ← saved credentials). */
 function getProviderConfig(id) {
-    const saved = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
-    const base = PROVIDERS[id] || PROVIDERS['lmstudio'];
-    return {
-        id,
-        ...base,
-        baseUrl: saved[`prov-${id}-url`] || base.baseUrl,
-        apiKey:  saved[`prov-${id}-key`] || '',
-        model:   saved[`prov-${id}-model`] || base.model || 'local-model',
+    const normalized = id === 'claude' ? 'anthropic' : id;
+    const resolved = window.NexusAI?.getProvider(normalized);
+    if (resolved) return { ...resolved, native: resolved.dialect === 'anthropic' };
+    const base = PROVIDERS[normalized] || PROVIDERS.lmstudio || {};
+    return { id: normalized, ...base, apiKey: '', model: base.model || 'local-model' };
+}
+
+/** Single write path for provider credentials. */
+function saveProviderCredentials(id, { key, url, model } = {}) {
+    const n = id === 'claude' ? 'anthropic' : id;
+    const creds = safeJson('nexus_credentials', {});
+    const set = (field, value) => {
+        const k = `prov-${n}-${field}`;
+        if (value === undefined) return;
+        if (value) creds[k] = value; else delete creds[k];
     };
+    set('key', key);
+    set('url', url);
+    set('model', model);
+    localStorage.setItem('nexus_credentials', JSON.stringify(creds));
+    return creds;
 }
 
 async function fetchWithTimeout(url, options = {}, ms = 30000) {
@@ -133,101 +167,20 @@ async function fetchWithTimeout(url, options = {}, ms = 30000) {
     }
 }
 
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-/** Call one provider's chat completions endpoint with retries + backoff. */
-async function callProvider(cfg, messages, { maxTokens = 900, temperature = 0.75, retries = 2, timeout = 30000 } = {}) {
-    let lastErr;
-    for (let attempt = 0; attempt <= retries; attempt++) {
-        try {
-            const headers = { 'Content-Type': 'application/json' };
-            if (cfg.apiKey) headers['Authorization'] = `Bearer ${cfg.apiKey}`;
-            const res = await fetchWithTimeout(`${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({ model: cfg.model, messages, max_tokens: maxTokens, temperature }),
-            }, timeout);
-
-            if (!res.ok) {
-                const body = await res.text().catch(() => '');
-                // 4xx (except 429) won't be fixed by retrying
-                if (res.status >= 400 && res.status < 500 && res.status !== 429) {
-                    throw Object.assign(new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`), { fatal: true });
-                }
-                throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
-            }
-            const data = await res.json();
-            const text = data?.choices?.[0]?.message?.content;
-            if (!text) throw new Error('Empty completion returned by model');
-            return text;
-        } catch (e) {
-            lastErr = e;
-            const aborted = e.name === 'AbortError';
-            AgentLog.warn(`provider:${cfg.id}`,
-                `Attempt ${attempt + 1}/${retries + 1} failed (${aborted ? 'timeout' : e.message})`);
-            if (e.fatal || attempt === retries) break;
-            await sleep(500 * Math.pow(2, attempt)); // exponential backoff
-        }
-    }
-    throw lastErr;
-}
-
-/** Run the task against the configured engine, failing over down the chain. */
-async function runAgent(messages, opts = {}) {
-    const engine = State.model;
-    let chain = [];
-
-    if (engine === 'cloud') {
-        const primary = getProviderConfig(State.cloudProvider);
-        chain = [primary, getProviderConfig('openrouter'), getProviderConfig('groq')]
-            .filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
-    } else if (engine === 'local') {
-        const url = (document.getElementById('localModelUrl')?.value || 'http://localhost:1234/v1');
-        const isOllama = url.includes('11434');
-        chain = [getProviderConfig(isOllama ? 'ollama' : 'lmstudio')];
-        chain[0].baseUrl = url;
-        chain.push(getProviderConfig(isOllama ? 'lmstudio' : 'ollama'));
-    } else {
-        chain = []; // builtin / antigravity handoff mode — no live API call
-    }
-
-    const attempts = [];
-    for (const cfg of chain) {
-        if (cfg.needsKey && !cfg.apiKey) {
-            attempts.push({ provider: cfg.id, ok: false, reason: 'No API key configured — skipped' });
-            AgentLog.warn(`provider:${cfg.id}`, 'Skipped: missing API key');
-            continue;
-        }
-        try {
-            const out = await callProvider(cfg, messages, opts);
-            attempts.push({ provider: cfg.id, ok: true });
-            AgentLog.info('agent.engine', `Generation succeeded via "${cfg.label}"`, { chain: attempts });
-            return { text: out, provider: cfg.id };
-        } catch (e) {
-            attempts.push({ provider: cfg.id, ok: false, reason: e.message });
-            AgentLog.error('agent.engine', `AI agent FAILED on "${cfg.label}": ${e.message}`,
-                { provider: cfg.id, chain: attempts, model: cfg.model });
-        }
-    }
-
-    if (chain.length) {
-        AgentLog.error('agent.engine', 'All providers in failover chain exhausted — falling back to built-in template engine', { attempts });
-    }
-    return null; // caller falls back to built-in generator
-}
-
+/**
+ * Probe one provider. Delegates to the engine so native providers
+ * (Anthropic) are tested with a real request instead of a `/models` GET
+ * that their API does not implement.
+ */
 async function testProviderConnection(id) {
-    const cfg = getProviderConfig(id);
-    if (cfg.needsKey && !cfg.apiKey) return { ok: false, reason: 'API key not set' };
-    try {
-        const res = await fetchWithTimeout(`${cfg.baseUrl.replace(/\/$/, '')}/models`, {
-            headers: cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {},
-        }, 8000);
-        if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` };
-        return { ok: true, reason: 'Reachable' };
-    } catch (e) {
-        return { ok: false, reason: e.name === 'AbortError' ? 'Timeout / server offline' : e.message };
-    }
+    if (!window.NexusAI) return { ok: false, reason: 'AI engine not loaded' };
+    const isLocal = (PROVIDERS[id]?.kind === 'local');
+    const res = await window.NexusAI.testConnection(
+        isLocal
+            ? { provider: 'local', localType: id, localUrl: getProviderConfig(id).baseUrl }
+            : { provider: 'cloud', cloudProvider: id, cloudApiKey: getProviderConfig(id).apiKey }
+    );
+    return { ok: res.ok, reason: res.message };
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -249,6 +202,10 @@ const PAGE_TITLES = {
     trends: 'Trending Now',
     browser: 'Browser Agent',
     integrations: 'MCP & Integrations',
+    accounts: 'Connected Accounts',
+    canva: 'Canva Studio',
+    logs: 'Agent Logs',
+    tutorial: 'Tutorial',
 };
 
 function switchPage(pageId) {
@@ -279,17 +236,51 @@ function switchPage(pageId) {
     if (pageId === 'trends') fetchTrends();
     if (pageId === 'logs') renderAgentLogs();
     if (pageId === 'tutorial') initTutorial();
-    if (pageId === 'accounts') { setTimeout(initAccountsPage, 50); }
+    if (pageId === 'accounts') { setTimeout(() => { initAccountsPage(); refreshQueueView(); }, 50); }
     if (pageId === 'browser') initBrowserPage();
+    if (pageId === 'utm') applyUtmPreset();
 }
 
 document.querySelectorAll('.nav-link').forEach(link => {
     link.addEventListener('click', e => {
         e.preventDefault();
-        const pageId = link.closest('.nav-item').dataset.page;
+        const pageId = link.closest('.nav-item')?.dataset.page;
         if (pageId) switchPage(pageId);
+        document.querySelector('.app-shell')?.classList.remove('mobile-open');
     });
 });
+
+function initChrome() {
+    const shell = document.querySelector('.app-shell');
+    document.getElementById('sidebarToggle')?.addEventListener('click', () => {
+        if (window.innerWidth <= 900) {
+            shell?.classList.toggle('mobile-open');
+        } else {
+            shell?.classList.toggle('sidebar-collapsed');
+        }
+    });
+    document.getElementById('mobileNavBtn')?.addEventListener('click', () => shell?.classList.toggle('mobile-open'));
+    document.getElementById('sidebarBackdrop')?.addEventListener('click', () => shell?.classList.remove('mobile-open'));
+    document.getElementById('notifBtn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const panel = document.getElementById('notifPanel');
+        if (!panel) return;
+        const open = panel.classList.toggle('open');
+        if (open) renderNotifications(panel);
+    });
+    document.addEventListener('click', () => document.getElementById('notifPanel')?.classList.remove('open'));
+}
+
+function renderNotifications(panel) {
+    const logs = AgentLog.all().slice(-8).reverse();
+    if (!logs.length) {
+        panel.innerHTML = '<div class="notif-item">No notifications yet. Agent activity will appear here.</div>';
+        return;
+    }
+    panel.innerHTML = logs.map(l => `<div class="notif-item"><strong>${escHtml(l.level)}</strong> · ${escHtml(l.message)}</div>`).join('');
+    const dot = document.getElementById('notifDot');
+    if (dot) dot.style.display = AgentLog.errors().length ? 'block' : 'none';
+}
 
 /* ══════════════════════════════════════════════════════════════
    GREETING
@@ -306,10 +297,83 @@ function setGreeting() {
 /* ══════════════════════════════════════════════════════════════
    DASHBOARD
 ══════════════════════════════════════════════════════════════ */
+function marketingStats() {
+    const events = State.calendarEvents || [];
+    const history = safeJson('nexus_content_history', []);
+    const queue = safeJson('nexus_publish_queue', []);
+    const now = new Date();
+    const thisMonth = events.filter(e => {
+        if (!e.date) return false;
+        const d = new Date(e.date);
+        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    });
+    const published = queue.filter(q => q.status === 'published').length
+        + events.filter(e => e.status === 'published').length;
+    const scheduled = events.filter(e => e.status === 'scheduled').length
+        + queue.filter(q => q.status === 'queued' || q.status === 'scheduled').length;
+    const platforms = {};
+    events.forEach(e => {
+        if (e.platform) platforms[e.platform] = (platforms[e.platform] || 0) + 1;
+    });
+    const generatedPieces = history.reduce((n, h) => n + Object.keys(h.results || {}).length, 0);
+    return { thisMonth: thisMonth.length, published, scheduled, history: history.length, generatedPieces, platforms, queue, events };
+}
+
 function initDashboard() {
+    const stats = marketingStats();
+    const queuedEl = document.getElementById('kpiQueued');
+    if (queuedEl) {
+        queuedEl.dataset.count = String(stats.scheduled);
+        queuedEl.textContent = String(stats.scheduled);
+    }
+    const genEl = document.getElementById('kpiGenerated');
+    if (genEl) genEl.textContent = String(stats.generatedPieces);
+    const monthEl = document.getElementById('kpiMonth');
+    if (monthEl) {
+        monthEl.dataset.count = String(stats.thisMonth);
+        monthEl.textContent = String(stats.thisMonth);
+    }
+    const pubEl = document.getElementById('kpiPublished');
+    if (pubEl) {
+        pubEl.dataset.count = String(stats.published);
+        pubEl.textContent = String(stats.published);
+    }
+    const monthTrend = document.getElementById('kpiMonthTrend');
+    if (monthTrend) monthTrend.innerHTML = `<i class="ph ph-calendar-blank"></i>${stats.thisMonth}`;
+    renderPlatformBars(stats.platforms);
+    renderUpcomingPosts();
+    // animateCounters/animateBars existed but were never called — the KPI numbers
+    // therefore never animated despite every card carrying data-count.
     animateCounters();
     animateBars();
-    renderUpcomingPosts();
+}
+
+function renderPlatformBars(platforms) {
+    const host = document.getElementById('platformBars');
+    if (!host) return;
+    const rows = [
+        { key: 'instagram', label: 'Instagram', icon: 'ph-fill ph-instagram-logo', fill: 'var(--ig-grad)' },
+        { key: 'facebook', label: 'Facebook', icon: 'ph-fill ph-facebook-logo', fill: 'linear-gradient(90deg,#1877f2,#0d65d9)' },
+        { key: 'youtube', label: 'YouTube', icon: 'ph-fill ph-youtube-logo', fill: 'linear-gradient(90deg,#ff0000,#cc0000)' },
+        { key: 'linkedin', label: 'LinkedIn', icon: 'ph-fill ph-linkedin-logo', fill: 'linear-gradient(90deg,#0a66c2,#004182)' },
+        { key: 'tiktok', label: 'TikTok', icon: 'ph-fill ph-tiktok-logo', fill: 'linear-gradient(90deg,#25f4ee,#fe2c55)' },
+        { key: 'twitter', label: 'X / Twitter', icon: 'ph-fill ph-twitter-logo', fill: 'linear-gradient(90deg,#1d9bf0,#0f1419)' },
+    ];
+    const max = Math.max(1, ...rows.map(r => platforms[r.key] || 0));
+    const total = Object.values(platforms).reduce((a, b) => a + b, 0);
+    if (!total) {
+        host.innerHTML = '<p class="helper-text">No calendar posts yet. Add posts or auto-plan a week to see mix.</p>';
+        return;
+    }
+    host.innerHTML = rows.map(r => {
+        const n = platforms[r.key] || 0;
+        const pct = Math.round((n / max) * 100);
+        return `<div class="pbar-row">
+            <div class="pbar-label"><i class="${r.icon}"></i> ${r.label}</div>
+            <div class="pbar-track"><div class="pbar-fill" style="width:${pct}%;background:${r.fill}"></div></div>
+            <div class="pbar-val">${n}</div>
+        </div>`;
+    }).join('');
 }
 
 function animateCounters() {
@@ -339,12 +403,7 @@ function animateBars() {
     }, 100);
 }
 
-const SAMPLE_POSTS = [
-    { platform: 'ig', title: 'Product Launch Teaser', time: 'Today, 10:00 AM', status: 'scheduled' },
-    { platform: 'fb', title: 'Customer Success Story', time: 'Tomorrow, 2:00 PM', status: 'draft' },
-    { platform: 'yt', title: 'Weekly Vlog: Behind the Scenes', time: 'Friday, 5:00 PM', status: 'planning' },
-    { platform: 'li', title: 'Thought Leadership Thread', time: 'Monday, 8:00 AM', status: 'planning' },
-];
+const SAMPLE_POSTS = [];
 
 const STATUS_MAP = {
     scheduled: { cls: 'st-scheduled', label: 'Scheduled' },
@@ -364,17 +423,30 @@ const PLATFORM_ICONS = {
 function renderUpcomingPosts() {
     const list = document.getElementById('upcomingPostsList');
     if (!list) return;
-    const posts = [...SAMPLE_POSTS, ...State.calendarEvents.slice(0, 2)];
-    list.innerHTML = posts.slice(0, 4).map(p => {
+    const mapped = State.calendarEvents
+        .slice()
+        .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+        .map(e => ({
+            platform: ({ instagram: 'ig', facebook: 'fb', youtube: 'yt', linkedin: 'li', twitter: 'tw', tiktok: 'tw', blog: 'blog' })[e.platform] || e.platform,
+            title: e.title,
+            time: [e.date, e.time].filter(Boolean).join(' '),
+            status: e.status || 'planning',
+        }));
+    const posts = mapped.slice(0, 6);
+    if (!posts.length) {
+        list.innerHTML = '<p class="helper-text">Nothing scheduled. Use the calendar to add posts or auto-plan 7 days.</p>';
+        return;
+    }
+    list.innerHTML = posts.map(p => {
         const s = STATUS_MAP[p.status] || STATUS_MAP.planning;
         return `
         <div class="sched-item">
-            <div class="sched-picon ${p.platform}"><i class="${PLATFORM_ICONS[p.platform] || 'ph ph-file'}"></i></div>
+            <div class="sched-picon ${escHtml(p.platform)}"><i class="${PLATFORM_ICONS[p.platform] || 'ph ph-file'}"></i></div>
             <div class="sched-details">
                 <div class="sched-title">${escHtml(p.title)}</div>
-                <div class="sched-time">${p.time || p.date || ''}</div>
+                <div class="sched-time">${escHtml(p.time || p.date || '')}</div>
             </div>
-            <div class="status-badge ${s.cls}">${s.label}</div>
+            <div class="status-badge ${s.cls}">${escHtml(s.label)}</div>
         </div>`;
     }).join('');
 }
@@ -474,43 +546,6 @@ const CONTENT_DB = {
     },
 };
 
-const AGENT_SYSTEM_PROMPT = `You are Nexus, a world-class Digital Marketing Expert and Social Media Manager.
-Skills: strategy, platform-native copywriting (Instagram, Facebook, YouTube, LinkedIn, X/Twitter, TikTok, Blog/SEO),
-Meta Ads & Google Ads campaign design, creative direction, hashtag & UTM research, A/B testing, analytics interpretation
-(CPM/CPC/CTR/ROAS), email marketing, and community management.
-Rules: always deliver ready-to-post markdown per platform; use AIDA/PAS/HOOK-VALUE-CTA formulas; provide Version A/B variants;
-include hashtags by volume tier, posting-time advice, and a visual brief. Never invent metrics or fake testimonials.`;
-
-function buildAgentMessages(topic, tone, brand, platform, extraContext = '') {
-    return [
-        { role: 'system', content: AGENT_SYSTEM_PROMPT },
-        { role: 'user', content: `Brand: ${brand}\nTopic/directive: ${topic}\nPlatform: ${platform}\nTone: ${tone}${extraContext ? `\nExtra context: ${extraContext}` : ''}\n\nGenerate one complete, ready-to-post ${platform} content package in markdown.` },
-    ];
-}
-
-function generateContent(instruction, platforms, tone, brand, contentType, context) {
-    const results = {};
-
-    platforms.forEach(platform => {
-        switch (platform.toLowerCase()) {
-            case 'instagram': results[platform] = genInstagramContent(instruction, tone, brand, contentType, context); break;
-            case 'facebook':  results[platform] = genFacebookContent(instruction, tone, brand, context); break;
-            case 'youtube':   results[platform] = genYouTubeContent(instruction, tone, brand, context); break;
-            case 'linkedin':  results[platform] = genLinkedInContent(instruction, tone, brand, context); break;
-            case 'twitter':   results[platform] = genTwitterContent(instruction, tone, brand, context); break;
-            case 'blog':      results[platform] = genBlogContent(instruction, brand, context); break;
-            case 'email':     results[platform] = genEmailContent(instruction, tone, brand, context); break;
-        }
-    });
-
-    // If contentType overrides
-    if (contentType === 'ads') {
-        results['ad-copy'] = genAdCopy(instruction, tone, brand);
-    }
-
-    return results;
-}
-
 window.generateSinglePlatformContent = function(topic, platform, tone, brand, type, ctx) {
     switch ((platform || '').toLowerCase()) {
         case 'instagram': return genInstagramContent(topic, tone, brand, type, ctx);
@@ -518,6 +553,7 @@ window.generateSinglePlatformContent = function(topic, platform, tone, brand, ty
         case 'youtube':   return genYouTubeContent(topic, tone, brand, ctx);
         case 'linkedin':  return genLinkedInContent(topic, tone, brand, ctx);
         case 'twitter':   return genTwitterContent(topic, tone, brand, ctx);
+        case 'tiktok':    return genTikTokContent(topic, tone, brand, ctx);
         case 'blog':      return genBlogContent(topic, brand, ctx);
         case 'email':     return genEmailContent(topic, tone, brand, ctx);
         case 'ads':       return genAdCopy(topic, tone, brand);
@@ -674,6 +710,32 @@ What principle would you add? Drop it in the comments below.
 • First comment: "Resources for this post → [your link]"
 • Best time: Tuesday-Thursday, 7-9 AM or 12 PM
 • Engage with every comment within 1 hour of posting`;
+}
+
+function genTikTokContent(topic, tone, brand, ctx) {
+    return `🎵 **TIKTOK / SHORT-FORM PACKAGE**
+Brand: ${brand}
+
+**Hook (0–2s on-screen text):**
+Stop scrolling if you care about ${topic}.
+
+**Script (35–45s):**
+[0-2s] Face-to-camera hook + text overlay
+[2-12s] Name the mistake most people make with ${topic}
+[12-28s] 3 punchy steps (one per cut)
+[28-38s] Proof / example — keep captions on screen
+[38-45s] CTA: follow + comment the word that matches your niche
+
+**On-screen captions:** 6–8 words per line, high contrast, never cover faces.
+
+**Sound:** trending original audio OR voiceover-first (algorithm prefers watch time).
+
+**Hashtags (3–5, not 20):**
+${getHashtags('marketing').split(' ').slice(0, 5).join(' ')}
+
+**CTA:** ${toneStatement(tone, topic)}
+
+**Posting:** 3–5x / week, first comment pinned with the tracked UTM link.`;
 }
 
 function genTwitterContent(topic, tone, brand, ctx) {
@@ -862,10 +924,6 @@ Description 2: Book your free strategy session. No commitment. Results guarantee
 • Exclude: Existing customers`;
 }
 
-function genAdCopyContent(topic, tone, brand) {
-    return genAdCopy(topic, tone, brand);
-}
-
 /* ── Helpers ─────────────────────────────────────────────────── */
 function toneStatement(tone, topic) {
     const statements = {
@@ -894,7 +952,7 @@ function getHashtags(niche = 'marketing') {
 function generateTags(topic) {
     const t = topic.toLowerCase().replace(/\s+/g, ' ');
     return [t, `${t} tutorial`, `${t} tips`, `${t} for beginners`, `${t} guide`,
-        `how to ${t}`, `best ${t}`, `${t} strategy`, `${t} 2025`,
+        `how to ${t}`, `best ${t}`, `${t} strategy`, `${t} ${new Date().getFullYear()}`,
         'digitalmarketing', 'socialmedia', 'onlinebusiness', 'contentcreator', 'entrepreneur'
     ].join(', ');
 }
@@ -908,7 +966,7 @@ function escHtml(str) {
 /* ══════════════════════════════════════════════════════════════
    AI AGENT FORM
  ══════════════════════════════════════════════════════════════ */
-document.getElementById('agentForm').addEventListener('submit', async (e) => {
+document.getElementById('agentForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
 
     const instruction = document.getElementById('agentInstruction').value.trim();
@@ -933,6 +991,7 @@ document.getElementById('agentForm').addEventListener('submit', async (e) => {
     feedback.classList.remove('hidden');
     successToast.classList.add('hidden');
     dispatchBtn.disabled = true;
+    setDispatchCancelVisible(true);
 
     try {
         if (typeof AgentLog !== 'undefined') {
@@ -947,40 +1006,63 @@ document.getElementById('agentForm').addEventListener('submit', async (e) => {
             brand,
             contentType,
             context,
-            onProgress: (statusMsg) => {
-                feedbackText.textContent = statusMsg;
-            }
+            onProgress: (statusMsg) => { feedbackText.textContent = statusMsg; },
+            // Every provider attempt, retry and fallback is written to the
+            // Agent Logs page — this is the wiring that was missing before.
+            onLog: (level, source, message, detail) => {
+                const fn = AgentLog[level] || AgentLog.info;
+                fn.call(AgentLog, source, message, detail);
+            },
         });
 
         feedback.classList.add('hidden');
         dispatchBtn.disabled = false;
+        setDispatchCancelVisible(false);
 
         State.outputTabs = results;
         renderOutputTabs(results);
-        outputEmpty.classList.add('hidden');
-        outputTabs.classList.remove('hidden');
+        outputEmpty.classList.toggle('hidden', Object.keys(results).length > 0);
+        outputTabs.classList.toggle('hidden', Object.keys(results).length === 0);
         successToast.classList.remove('hidden');
 
-        // Auto-save generation to local history
-        const history = JSON.parse(localStorage.getItem('nexus_content_history') || '[]');
+        // Auto-save generation to local history (with the run metadata so the
+        // Analytics page can report which provider actually served each piece).
+        const history = safeJson('nexus_content_history', []);
         history.unshift({
             date: new Date().toISOString(),
             instruction,
             brand,
             platforms,
-            results
+            results,
+            meta: window.NexusAI.lastRun || null,
         });
-        localStorage.setItem('nexus_content_history', JSON.stringify(history.slice(0, 30)));
+        try {
+            localStorage.setItem('nexus_content_history', JSON.stringify(history.slice(0, 30)));
+        } catch (e) {
+            AgentLog.warn('agent.dispatch', 'History storage full — trimming to the 10 newest runs');
+            localStorage.setItem('nexus_content_history', JSON.stringify(history.slice(0, 10)));
+        }
 
         setTimeout(() => successToast.classList.add('hidden'), 4000);
         const engineLabel = (window.NexusAI && window.NexusAI.getDisplayName) ? window.NexusAI.getDisplayName() : (PROVIDERS[State.model]?.label || State.model);
+        const run = window.NexusAI.lastRun;
+        const degraded = Object.values(run?.pieces || {}).filter(p => p.degraded).length;
         if (typeof AgentLog !== 'undefined') {
-            AgentLog.success('agent.dispatch', `Task completed via ${engineLabel}`, { pieces: Object.keys(results) });
+            AgentLog.success('agent.dispatch', `Task completed via ${engineLabel}`, {
+                pieces: Object.keys(results), elapsedMs: run?.elapsedMs, degradedPieces: degraded,
+            });
         }
-        showToast(`✅ Generated ${Object.keys(results).length} piece(s) with ${engineLabel}!`, 'success');
+        const pieceCount = Object.keys(results).length;
+        showToast(
+            degraded
+                ? `⚠️ Generated ${pieceCount} piece(s) — ${degraded} used the offline fallback (see Agent Logs)`
+                : `✅ Generated ${pieceCount} piece(s) with ${engineLabel}!`,
+            degraded ? 'info' : 'success'
+        );
     } catch (err) {
         feedback.classList.add('hidden');
         dispatchBtn.disabled = false;
+        setDispatchCancelVisible(false);
         if (typeof AgentLog !== 'undefined') {
             AgentLog.error('agent.dispatch', 'Generation error', err.message);
         }
@@ -988,10 +1070,30 @@ document.getElementById('agentForm').addEventListener('submit', async (e) => {
     }
 });
 
+function setDispatchCancelVisible(visible) {
+    const btn = document.getElementById('dispatchCancelBtn');
+    if (btn) btn.classList.toggle('hidden', !visible);
+}
+
+function cancelDispatch() {
+    if (window.NexusAI) window.NexusAI.abort();
+    showToast('Cancelling generation…', 'info');
+}
+
 function renderOutputTabs(results) {
     const tabsRow = document.getElementById('tabsRow');
     const tabContent = document.getElementById('tabContent');
-    const platforms = Object.keys(results);
+    if (!tabsRow || !tabContent) return;
+    const platforms = Object.keys(results || {});
+
+    // BUG FIX: an empty result set used to index platforms[0] (undefined) and
+    // render a broken tab + blank panel instead of an explicit message.
+    if (!platforms.length) {
+        tabsRow.innerHTML = '';
+        tabContent.innerHTML = '<div class="content-block"><p>No content was returned. Check the Agent Logs page for the provider error, then retry.</p></div>';
+        State.activeOutputTab = '';
+        return;
+    }
 
     tabsRow.innerHTML = platforms.map((p, i) =>
         `<button class="tab-btn ${i === 0 ? 'active' : ''}" data-tab="${escHtml(p)}">${escHtml(p.toUpperCase())}</button>`
@@ -1001,20 +1103,93 @@ function renderOutputTabs(results) {
 
     State.activeOutputTab = platforms[0];
     const initialContent = results[platforms[0]] || '';
-    tabContent.innerHTML = `<div class="content-block">${window.renderMarkdown ? window.renderMarkdown(initialContent) : escHtml(initialContent)}</div>`;
+    tabContent.innerHTML = `<div class="content-block">${renderContent(initialContent)}</div>`;
+    attachContentActions(tabContent);
+}
+
+/** Render either markdown (via the shared renderer) or escaped plain text. */
+function renderContent(text) {
+    const value = text == null ? '' : String(text);
+    return window.renderMarkdown ? window.renderMarkdown(value) : escHtml(value);
+}
+
+/**
+ * Copy helpers. `navigator.clipboard` only exists in a secure context, but the
+ * README recommends opening ui/index.html directly from disk — where it is
+ * undefined and the old code threw "Cannot read properties of undefined".
+ */
+async function copyToClipboard(text) {
+    const value = String(text ?? '');
+    if (!value) return false;
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(value);
+            return true;
+        }
+    } catch { /* fall through to the legacy path */ }
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '-1000px';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, value.length);
+        const ok = document.execCommand('copy');
+        ta.remove();
+        return ok;
+    } catch {
+        return false;
+    }
 }
 
 function switchOutputTab(platform) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === platform));
     const content = State.outputTabs[platform] || '';
-    document.getElementById('tabContent').innerHTML =
-        `<div class="content-block">${window.renderMarkdown ? window.renderMarkdown(content) : escHtml(content)}</div>`;
+    const host = document.getElementById('tabContent');
+    if (!host) return;
+    host.innerHTML = `<div class="content-block">${renderContent(content)}</div>`;
+    attachContentActions(host);
     State.activeOutputTab = platform;
 }
 
-function copyOutput() {
+/** Add per-output utility buttons (repurpose / UTM / guardrail report). */
+function attachContentActions(host) {
+    const block = host.querySelector('.content-block');
+    if (!block) return;
+    const bar = document.createElement('div');
+    bar.className = 'content-actions';
+    bar.innerHTML = `
+        <button class="btn btn-ghost btn-sm" data-act="copy"><i class="ph ph-copy"></i> Copy</button>
+        <button class="btn btn-ghost btn-sm" data-act="utm"><i class="ph ph-link"></i> Add UTM link</button>
+        <button class="btn btn-ghost btn-sm" data-act="repurpose"><i class="ph ph-arrows-clockwise"></i> Repurpose</button>
+        <button class="btn btn-ghost btn-sm" data-act="calendar"><i class="ph ph-calendar-plus"></i> To calendar</button>
+        <button class="btn btn-ghost btn-sm" data-act="publisher"><i class="ph ph-paper-plane-tilt"></i> To publisher</button>`;
+    bar.addEventListener('click', (e) => {
+        const act = e.target.closest('button')?.dataset.act;
+        if (!act) return;
+        const text = State.outputTabs[State.activeOutputTab] || '';
+        if (act === 'copy') {
+            copyToClipboard(text).then(ok => showToast(ok ? 'Copied to clipboard!' : 'Copy failed — select the text manually', ok ? 'success' : 'error'));
+        } else if (act === 'utm') {
+            buildUtmForActiveOutput();
+        } else if (act === 'repurpose') {
+            repurposeActiveOutput();
+        } else if (act === 'calendar') {
+            addOutputToCalendar();
+        } else if (act === 'publisher') {
+            sendOutputToPublisher();
+        }
+    });
+    block.appendChild(bar);
+}
+
+async function copyOutput() {
     const content = State.outputTabs[State.activeOutputTab] || '';
-    navigator.clipboard.writeText(content).then(() => showToast('Copied to clipboard!', 'success'));
+    const ok = await copyToClipboard(content);
+    showToast(ok ? 'Copied to clipboard!' : 'Copy failed — your browser blocked clipboard access', ok ? 'success' : 'error');
 }
 
 function clearOutput() {
@@ -1080,7 +1255,8 @@ document.getElementById('genCaptionBtn')?.addEventListener('click', () => {
     const platform = document.getElementById('captionPlatform').value;
     const formula = document.getElementById('captionFormula').value;
     if (!topic) { showToast('Enter a topic first', 'info'); return; }
-    const content = genInstagramContent(topic, 'professional', State.settings.brand, 'post', '');
+    const platMap = { Instagram: 'instagram', Facebook: 'facebook', LinkedIn: 'linkedin', 'Twitter/X': 'twitter', TikTok: 'tiktok' };
+    const content = window.generateSinglePlatformContent(topic, platMap[platform] || 'instagram', 'professional', State.settings.brand, formula, '');
     document.getElementById('captionOutput').textContent = content;
 });
 
@@ -1153,13 +1329,13 @@ document.getElementById('genABBtn')?.addEventListener('click', () => {
 });
 
 function copyTag(tag) {
-    navigator.clipboard.writeText(tag).then(() => showToast(`Copied ${tag}`, 'success'));
+    copyToClipboard(tag).then(ok => showToast(ok ? `Copied ${tag}` : 'Copy blocked by the browser', ok ? 'success' : 'error'));
 }
 
 /* ══════════════════════════════════════════════════════════════
    CALENDAR
 ══════════════════════════════════════════════════════════════ */
-const PLATFORM_EV_CLS = { instagram: 'ev-ig', facebook: 'ev-fb', youtube: 'ev-yt', linkedin: 'ev-li', twitter: 'ev-tw', blog: 'ev-blog' };
+const PLATFORM_EV_CLS = { instagram: 'ev-ig', facebook: 'ev-fb', youtube: 'ev-yt', linkedin: 'ev-li', twitter: 'ev-tw', tiktok: 'ev-tw', blog: 'ev-blog', email: 'ev-blog' };
 
 function renderCalendar() {
     const grid = document.getElementById('calendarGrid');
@@ -1176,26 +1352,24 @@ function renderCalendar() {
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const today = new Date();
 
-    // Sample events
-    const defaultEvents = [
-        { date: `${year}-${String(month+1).padStart(2,'0')}-03`, title: 'Product Teaser', platform: 'instagram' },
-        { date: `${year}-${String(month+1).padStart(2,'0')}-07`, title: 'Weekly Vlog', platform: 'youtube' },
-        { date: `${year}-${String(month+1).padStart(2,'0')}-10`, title: 'LinkedIn Article', platform: 'linkedin' },
-        { date: `${year}-${String(month+1).padStart(2,'0')}-14`, title: 'Facebook Live', platform: 'facebook' },
-        { date: `${year}-${String(month+1).padStart(2,'0')}-17`, title: 'Blog Post', platform: 'blog' },
-        { date: `${year}-${String(month+1).padStart(2,'0')}-21`, title: 'Product Launch Day', platform: 'instagram' },
-        { date: `${year}-${String(month+1).padStart(2,'0')}-21`, title: 'Launch Announcement', platform: 'facebook' },
-        { date: `${year}-${String(month+1).padStart(2,'0')}-25`, title: 'YouTube Tutorial', platform: 'youtube' },
-        ...State.calendarEvents,
-    ];
+    // BUG FIX: events created before ids existed could not be opened, approved
+    // or deleted. Backfill missing ids/status once, on read.
+    let needsPersist = false;
+    State.calendarEvents.forEach(e => {
+        if (!e.id) { e.id = `ev-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`; needsPersist = true; }
+        if (!e.status) { e.status = 'draft'; needsPersist = true; }
+    });
+    if (needsPersist) persistCalendarEvents();
 
     const getEventsForDay = (day) => {
-        const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-        return defaultEvents.filter(ev => ev.date === dateStr);
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        return State.calendarEvents
+            .filter(ev => ev.date === dateStr)
+            .sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
     };
 
     const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    let html = DAY_NAMES.map(d => `<div class="cal-day-label">${d}</div>`).join('');
+    let html = DAY_NAMES.map(n => `<div class="cal-day-label">${n}</div>`).join('');
 
     // Empty cells before month start
     for (let i = 0; i < firstDay; i++) html += `<div class="cal-cell other-month"><div class="cal-date">&nbsp;</div></div>`;
@@ -1203,17 +1377,42 @@ function renderCalendar() {
     for (let day = 1; day <= daysInMonth; day++) {
         const events = getEventsForDay(day);
         const isToday = today.getDate() === day && today.getMonth() === month && today.getFullYear() === year;
-        const evHtml = events.slice(0, 3).map(ev =>
-            `<div class="cal-event ${PLATFORM_EV_CLS[ev.platform] || ''}">${ev.title}</div>`
-        ).join('');
+        const shown = events.slice(0, 3);
+        const evHtml = shown.map(ev => {
+            const badge = STATUS_BADGE[ev.status] || STATUS_BADGE.draft;
+            return `<div class="cal-event ${PLATFORM_EV_CLS[ev.platform] || ''}" data-id="${escHtml(ev.id)}" role="button" tabindex="0"
+                        title="${escHtml(`${badge.label} · ${ev.time || 'no time'} · ${ev.title}`)}">${escHtml(ev.title)}</div>`;
+        }).join('');
+        const more = events.length > shown.length
+            ? `<div class="cal-more">+${events.length - shown.length} more</div>`
+            : '';
 
         html += `<div class="cal-cell ${isToday ? 'today' : ''} ${events.length ? 'has-event' : ''}">
             <div class="cal-date">${day}</div>
-            ${evHtml}
+            ${evHtml}${more}
         </div>`;
     }
 
     grid.innerHTML = html;
+
+    grid.querySelectorAll('.cal-event[data-id]').forEach(el => {
+        const open = () => renderPostDetail(el.dataset.id);
+        el.addEventListener('click', open);
+        el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    });
+
+    renderCalendarSummary();
+}
+
+function renderCalendarSummary() {
+    const el = document.getElementById('calendarSummary');
+    if (!el) return;
+    const counts = {};
+    State.calendarEvents.forEach(e => { const s = e.status || 'draft'; counts[s] = (counts[s] || 0) + 1; });
+    const monthPrefix = `${State.calendarDate.getFullYear()}-${String(State.calendarDate.getMonth() + 1).padStart(2, '0')}`;
+    const thisMonth = State.calendarEvents.filter(e => String(e.date || '').startsWith(monthPrefix)).length;
+    const parts = POST_STATUS_FLOW.filter(s => counts[s]).map(s => `${counts[s]} ${STATUS_BADGE[s].label.toLowerCase()}`);
+    el.textContent = `${thisMonth} post(s) this month` + (parts.length ? ` — ${parts.join(' · ')}` : '');
 }
 
 document.getElementById('prevMonth')?.addEventListener('click', () => {
@@ -1245,43 +1444,98 @@ document.getElementById('saveEventBtn')?.addEventListener('click', () => {
 
     if (!title || !date) { showToast('Enter a title and date', 'info'); return; }
 
-    State.calendarEvents.push({ title, date, time, platform, status });
-    localStorage.setItem('nexus_calendar_events', JSON.stringify(State.calendarEvents));
+    const newEvent = {
+        id: `ev-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        title, date, time, platform,
+        status: status || 'draft',
+        createdAt: new Date().toISOString(),
+        history: [{ status: status || 'draft', at: new Date().toISOString() }],
+    };
+    State.calendarEvents.push(newEvent);
+    persistCalendarEvents();
     closeModal();
     renderCalendar();
-    showToast(`Post scheduled: ${title}`, 'success');
+    AgentLog.info('calendar', `Post created: "${title}" (${platform}, ${date} ${time || ''})`);
+    showToast(`Post added: ${title}`, 'success');
 });
 
 /* ══════════════════════════════════════════════════════════════
    ANALYTICS
 ══════════════════════════════════════════════════════════════ */
 function initAnalytics() {
-    const topPosts = [
-        { rank: 1, title: 'Product Launch Teaser (Carousel)', meta: 'Instagram • Oct 3', stat: '12.4% ER' },
-        { rank: 2, title: 'Behind the Scenes Reel', meta: 'Instagram • Oct 7', stat: '9.8% ER' },
-        { rank: 3, title: 'Weekly Industry Insights Thread', meta: 'LinkedIn • Oct 10', stat: '7.2% ER' },
-    ];
+    const stats = marketingStats();
+    const perf = safeJson('nexus_performance', null);
+    const perfRows = perf?.rows || [];
+
+    const kpis = document.getElementById('analyticsKpis');
+    if (kpis) {
+        const cards = [];
+        if (perfRows.length) {
+            const impr = perfRows.reduce((a, c) => a + (c.impressions || 0), 0);
+            const spend = perfRows.reduce((a, c) => a + (c.spend || 0), 0);
+            const rev = perfRows.reduce((a, c) => a + (c.revenue || 0), 0);
+            const clicks = perfRows.reduce((a, c) => a + (c.clicks || 0), 0);
+            cards.push(
+                { v: impr.toLocaleString(), l: 'Impressions (imported)' },
+                { v: clicks.toLocaleString(), l: 'Clicks (imported)' },
+                { v: impr ? ((clicks / impr) * 100).toFixed(2) + '%' : 'n/a', l: 'Blended CTR' },
+                { v: '$' + spend.toFixed(0), l: 'Ad spend' },
+                { v: rev ? (rev / spend).toFixed(2) + '×' : 'n/a', l: 'Blended ROAS' },
+                { v: `${perfRows.length}`, l: 'Channels tracked' },
+            );
+        } else {
+            cards.push(
+                { v: stats.thisMonth, l: 'Calendar posts this month' },
+                { v: stats.generatedPieces, l: 'AI pieces generated' },
+                { v: stats.scheduled, l: 'Queued / scheduled' },
+                { v: stats.published, l: 'Published via API' },
+                { v: stats.history, l: 'Generation sessions' },
+                { v: Object.keys(stats.platforms).length, l: 'Active platforms' },
+            );
+        }
+        kpis.innerHTML = cards.map(c =>
+            `<div class="akpi"><div class="akpi-val">${escHtml(String(c.v))}</div><div class="akpi-label">${escHtml(c.l)}</div></div>`
+        ).join('');
+    }
+
+    const summary = document.getElementById('analyticsSummaryLine');
+    if (summary && perf?.updatedAt) {
+        summary.textContent = `Last import: ${new Date(perf.updatedAt).toLocaleString()}`;
+    }
+
+    const history = safeJson('nexus_content_history', []);
+    const topPosts = history.slice(0, 5).map((h, i) => ({
+        rank: i + 1,
+        title: h.instruction || 'Untitled brief',
+        meta: `${(h.platforms || []).join(', ')} • ${(h.date || '').slice(0, 10)} • via ${h.meta?.provider || 'built-in'}`,
+        stat: `${Object.keys(h.results || {}).length} pieces`,
+    }));
     const list = document.getElementById('topPostsList');
-    if (list) list.innerHTML = topPosts.map(p => `
+    if (list) {
+        list.innerHTML = topPosts.length ? topPosts.map(p => `
         <div class="tpost-item">
             <div class="tpost-rank">${p.rank}</div>
             <div class="tpost-info">
-                <div class="tpost-title">${p.title}</div>
-                <div class="tpost-meta">${p.meta}</div>
+                <div class="tpost-title">${escHtml(p.title)}</div>
+                <div class="tpost-meta">${escHtml(p.meta)}</div>
             </div>
-            <div class="tpost-stat">${p.stat}</div>
-        </div>
-    `).join('');
+            <div class="tpost-stat">${escHtml(p.stat)}</div>
+        </div>`).join('') : '<p class="helper-text">Generate content to populate this list from real sessions.</p>';
+    }
 
-    const recs = [
-        'Increase Reel output to 5/week — Reels are generating 3x more reach than static posts.',
-        'Post LinkedIn articles on Tuesday mornings — engagement is 40% higher than other days.',
-        'Add a stronger CTA to Facebook posts — click-through rate is below 1.5% this month.',
-        'YouTube thumbnail CTR is 4.2% — test a new design with more contrast and emotion.',
-        'Run a Facebook retargeting ad to your website visitors — current warm audience is large enough.',
-    ];
+    const recs = [];
+    if (!perfRows.length) {
+        recs.push('Import a platform export below (Instagram/Facebook Insights, X analytics, LinkedIn or an ads CSV) to unlock engagement rate, CTR, CPC, CPM, CPA and ROAS.');
+    }
+    if (stats.thisMonth < 8) recs.push(`Only ${stats.thisMonth} calendar post(s) this month — auto-plan 7 days to keep the cadence up.`);
+    if (!stats.platforms.tiktok && !stats.platforms.instagram) recs.push('Add short-form (Reels / TikTok) — it is the cheapest organic reach channel for most brands.');
+    if (stats.published === 0) recs.push('Connect accounts, start python3 agent/nexus_relay.py, then run a Validate (dry run) followed by Publish.');
+    if (stats.generatedPieces && stats.scheduled === 0) recs.push('You have generated copy that is not scheduled. Send it to the Publisher or add it to the calendar.');
+    const untagged = history.some(h => Object.values(h.results || {}).some(v => /https?:\/\//.test(v) && !/utm_source/.test(v)));
+    if (untagged) recs.push('Some generated copy contains links without UTM parameters. Run them through the UTM Builder so performance is attributable.');
+    if (!recs.length) recs.push('Cadence looks healthy. Next: review Agent Logs after each publish and A/B test one variable at a time.');
     const recList = document.getElementById('recList');
-    if (recList) recList.innerHTML = recs.map(r => `<li>${r}</li>`).join('');
+    if (recList) recList.innerHTML = recs.map(r => `<li>${escHtml(r)}</li>`).join('');
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -1289,7 +1543,7 @@ function initAnalytics() {
 ══════════════════════════════════════════════════════════════ */
 document.getElementById('htGenBtn')?.addEventListener('click', () => {
     const topic = document.getElementById('htTopic').value.toLowerCase();
-    const count = parseInt(document.getElementById('htCount').value);
+    const count = parseInt(document.getElementById('htCount')?.value || '20', 10) || 20;
     if (!topic) { showToast('Enter a topic first', 'info'); return; }
 
     const niche = Object.keys(CONTENT_DB.hashtag_banks).find(k => topic.includes(k)) || 'marketing';
@@ -1307,7 +1561,7 @@ document.getElementById('htGenBtn')?.addEventListener('click', () => {
         <div class="ht-section">
             <div class="ht-section-label">${s.label}</div>
             <div class="ht-section-pills">
-                ${s.tags.map(t => `<span class="ht-pill ${s.cls}" data-tag="${escHtml(t)}" title="Click to copy">${escHtml(t)}</span>`).join('')}
+                ${s.tags.slice(0, Math.max(3, Math.ceil(count / 4))).map(t => `<span class="ht-pill ${s.cls}" data-tag="${escHtml(t)}" title="Click to copy">${escHtml(t)}</span>`).join('')}
             </div>
         </div>
     `).join('');
@@ -1389,13 +1643,34 @@ document.getElementById('testCloudAIBtn')?.addEventListener('click', async () =>
 });
 
 document.getElementById('cloudProvider')?.addEventListener('change', (e) => {
-    State.cloudProvider = e.target.value;
+    const id = e.target.value;
+    State.cloudProvider = id;
+    // BUG FIX: the engine used to keep the OLD provider until "Save Settings"
+    // was pressed, so generating right after switching sent the request (and the
+    // key) to the previously selected vendor. Sync the engine immediately.
+    if (window.NexusAI) window.NexusAI.saveConfig({ cloudProvider: id });
     // prefill the key field if we already have one saved for this provider
-    const saved = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
     const kf = document.getElementById('cloudApiKey');
-    if (kf) kf.value = saved[`prov-${e.target.value}-key`] || '';
+    if (kf) kf.value = getProviderConfig(id).apiKey || '';
+    const modelInput = document.getElementById('cloudModelInput');
+    if (modelInput) modelInput.value = getProviderConfig(id).model || '';
     saveSettings();
+    updateProviderHint();
 });
+
+/** Show the docs link + key status for the selected provider. */
+function updateProviderHint() {
+    const id = currentProviderId();
+    const p = window.NexusProviders?.[id === 'claude' ? 'anthropic' : id];
+    const hint = document.getElementById('providerHint');
+    if (!hint || !p) return;
+    const hasKey = !!getProviderConfig(id).apiKey;
+    hint.innerHTML = `${escHtml(p.label)} · default model <code>${escHtml(p.model)}</code> · ` +
+        (p.needsKey
+            ? (hasKey ? '<span style="color:#4ade80">key stored ✔</span>' : '<span style="color:#fbbf24">no key yet</span>')
+            : '<span style="color:#4ade80">local, no key needed</span>') +
+        (p.keysUrl ? ` · <a href="${escHtml(p.keysUrl)}" target="_blank" rel="noopener noreferrer">get a key</a>` : '');
+}
 
 /* ── Provider key management (Settings page) ── */
 function currentProviderId() {
@@ -1406,46 +1681,60 @@ function saveProviderKey() {
     const id = currentProviderId();
     const key = document.getElementById('cloudApiKey')?.value.trim();
     if (!key) { showToast('Enter an API key first.', 'info'); return; }
-    const saved = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
-    saved[`prov-${id}-key`] = key;
-    localStorage.setItem('nexus_credentials', JSON.stringify(saved));
+    saveProviderCredentials(id, { key });
+    // Keep the engine's mirror of the active provider in sync so generation
+    // works immediately, without a second trip through "Save Settings".
+    if (window.NexusAI && (id === 'claude' ? 'anthropic' : id) === (window.NexusAI.config.cloudProvider === 'claude' ? 'anthropic' : window.NexusAI.config.cloudProvider)) {
+        window.NexusAI.saveConfig({ cloudApiKey: key });
+    }
     if (typeof AgentLog !== 'undefined') {
         AgentLog.info(`provider:${id}`, 'API key saved to browser storage (never transmitted to any Nexus server)');
     }
-    showToast(`${PROVIDERS[id]?.label || id} key saved`, 'success');
+    updateProviderHint();
+    showToast(`${PROVIDERS[id]?.label || id} key saved — it is used immediately`, 'success');
 }
 
 async function pingProvider() {
     const id = currentProviderId();
     const typed = document.getElementById('cloudApiKey')?.value.trim();
-    if (typed) {
-        const saved = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
-        saved[`prov-${id}-key`] = typed;
-        localStorage.setItem('nexus_credentials', JSON.stringify(saved));
-    }
+    if (typed) saveProviderCredentials(id, { key: typed });
     const out = document.getElementById('providerTestResult');
-    if (out) out.textContent = 'Testing...';
-    let res = { ok: false, reason: 'unknown' };
-    if (typeof testProviderConnection === 'function') {
-        res = await testProviderConnection(id);
-    } else if (window.NexusAI) {
-        const testRes = await window.NexusAI.testConnection({ provider: 'cloud', cloudProvider: id, cloudApiKey: typed });
-        res = { ok: testRes.ok, reason: testRes.message };
-    }
-    if (out) out.textContent = res.ok ? 'Reachable OK' : `FAIL: ${res.reason}`;
+    if (out) out.textContent = 'Testing…';
+    const res = await testProviderConnection(id);
+    if (out) out.textContent = res.ok ? '✔ Reachable' : `✘ ${res.reason}`;
     if (typeof AgentLog !== 'undefined') {
         if (res.ok) AgentLog.success(`provider:${id}`, 'Connection test passed');
         else AgentLog.error(`provider:${id}`, `Connection test failed: ${res.reason}`);
     }
+    updateProviderHint();
     showToast(res.ok ? `${PROVIDERS[id]?.label || id}: reachable` : `${PROVIDERS[id]?.label || id}: ${res.reason}`, res.ok ? 'success' : 'error');
 }
 
-// Persist local model base URL so engine survives reloads
+// Persist local model base URL + model so the engine survives reloads
 document.getElementById('localModelUrl')?.addEventListener('change', (e) => {
-    State.lmStudioUrl = e.target.value;
-    const saved = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
-    if (e.target.value.trim()) saved['local-model-url'] = e.target.value.trim();
-    localStorage.setItem('nexus_credentials', JSON.stringify(saved));
+    const url = e.target.value.trim();
+    State.lmStudioUrl = url;
+    const isOllama = url.includes('11434');
+    if (url) saveProviderCredentials(isOllama ? 'ollama' : 'lmstudio', { url });
+    if (window.NexusAI) {
+        window.NexusAI.saveConfig({ localUrl: url, localType: isOllama ? 'ollama' : 'lmstudio' });
+    }
+});
+
+document.getElementById('localModelName')?.addEventListener('change', (e) => {
+    const model = e.target.value.trim();
+    const isOllama = (document.getElementById('localHarnessType')?.value === 'ollama');
+    if (model) saveProviderCredentials(isOllama ? 'ollama' : 'lmstudio', { model });
+    if (window.NexusAI) window.NexusAI.saveConfig({ localModel: model });
+});
+
+document.getElementById('localHarnessType')?.addEventListener('change', (e) => {
+    const type = e.target.value;
+    const url = type === 'ollama' ? 'http://localhost:11434/v1' : 'http://localhost:1234/v1';
+    const urlInput = document.getElementById('localModelUrl');
+    if (urlInput) urlInput.value = url;
+    State.lmStudioUrl = url;
+    if (window.NexusAI) window.NexusAI.saveConfig({ localType: type, localUrl: url });
 });
 
 const SETTINGS_KEY = 'nexus_settings';
@@ -1475,14 +1764,19 @@ function loadSettings() {
     if (toneRadio) toneRadio.checked = true;
     applyEngineToUi(s.model || 'antigravity');
     const cp = document.getElementById('cloudProvider'); if (cp) cp.value = State.cloudProvider;
-    const savedCreds = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
+    const savedCreds = safeJson('nexus_credentials', {});
     const lm = document.getElementById('localModelUrl');
     if (lm && savedCreds['local-model-url']) { lm.value = savedCreds['local-model-url']; State.lmStudioUrl = savedCreds['local-model-url']; }
     const kf = document.getElementById('cloudApiKey');
-    if (kf) kf.value = savedCreds[`prov-${State.cloudProvider}-key`] || '';
+    if (kf) kf.value = getProviderConfig(State.cloudProvider).apiKey || '';
+    const cmi = document.getElementById('cloudModelInput');
+    if (cmi) cmi.value = getProviderConfig(State.cloudProvider).model || '';
     const tgt = document.getElementById('tgToken'); if (tgt) tgt.value = savedCreds['telegram-token'] || '';
     const tgc = document.getElementById('tgChatId'); if (tgc) tgc.value = savedCreds['telegram-chat-id'] || '';
     const bap = document.getElementById('browserActionsPermission'); if (bap) bap.checked = !!savedCreds['browser-actions-permission'];
+    const rt = document.getElementById('relayToken'); if (rt) rt.value = savedCreds['relay-token'] || '';
+    loadGuardrailsIntoUi();
+    updateProviderHint();
 }
 
 document.getElementById('saveSettingsBtn')?.addEventListener('click', () => {
@@ -1493,19 +1787,29 @@ document.getElementById('saveSettingsBtn')?.addEventListener('click', () => {
 
     // Save AI Config
     const aiProvider = document.querySelector('input[name="aiModel"]:checked')?.value || State.model || 'local';
-    const aiUpdates = {
-        provider: aiProvider,
-        localType: document.getElementById('localHarnessType')?.value || 'lmstudio',
-        localModel: document.getElementById('localModelName')?.value || 'hermes-3-llama-3.1-8b',
-        localUrl: document.getElementById('localModelUrl')?.value || 'http://localhost:1234/v1',
-        cloudProvider: document.getElementById('cloudProvider')?.value || 'gemini',
-        cloudApiKey: document.getElementById('cloudApiKey')?.value || '',
-        cloudModel: document.getElementById('cloudModelInput')?.value || ''
-    };
+    const cloudProvider = document.getElementById('cloudProvider')?.value || 'gemini';
+    const cloudApiKey = document.getElementById('cloudApiKey')?.value.trim() || '';
+    const cloudModel = document.getElementById('cloudModelInput')?.value.trim() || '';
+    const localUrl = document.getElementById('localModelUrl')?.value.trim() || 'http://localhost:1234/v1';
+    const localModel = document.getElementById('localModelName')?.value.trim() || 'hermes-3-llama-3.1-8b';
+    const localType = document.getElementById('localHarnessType')?.value || 'lmstudio';
+
     if (window.NexusAI) {
-        window.NexusAI.saveConfig(aiUpdates);
+        window.NexusAI.saveConfig({
+            provider: aiProvider,
+            localType, localModel, localUrl,
+            cloudProvider, cloudApiKey, cloudModel,
+            guardrails: readGuardrailsFromUi(),
+        });
     }
 
+    // Per-provider credentials go to the shared store (one write path).
+    if (cloudApiKey) saveProviderCredentials(cloudProvider, { key: cloudApiKey, model: cloudModel });
+    else if (cloudModel) saveProviderCredentials(cloudProvider, { model: cloudModel });
+    saveProviderCredentials(localType, { url: localUrl, model: localModel });
+
+    State.model = aiProvider;
+    State.cloudProvider = cloudProvider;
     saveSettings();
     if (typeof AgentLog !== 'undefined') {
         AgentLog.info('settings', 'User settings saved', State.settings);
@@ -1515,12 +1819,48 @@ document.getElementById('saveSettingsBtn')?.addEventListener('click', () => {
     const brandInput = document.getElementById('brandName');
     if (brandInput && !brandInput.value) brandInput.value = State.settings.brand;
 
+    updateProviderHint();
     showToast('Settings & AI configuration saved successfully!', 'success');
 });
 
+/* ── Brand guardrails (applied to every generation) ───────────── */
+function readGuardrailsFromUi() {
+    const bannedRaw = document.getElementById('guardBannedWords')?.value || '';
+    return {
+        enabled: document.getElementById('guardEnabled') ? !!document.getElementById('guardEnabled').checked : true,
+        bannedWords: bannedRaw.split(/[,\n]/).map(s => s.trim()).filter(Boolean),
+        requiredDisclaimer: document.getElementById('guardDisclaimer')?.value.trim() || '',
+        maxHashtags: parseInt(document.getElementById('guardMaxHashtags')?.value || '30', 10),
+        allowEmoji: document.getElementById('guardAllowEmoji') ? !!document.getElementById('guardAllowEmoji').checked : true,
+    };
+}
+
+function loadGuardrailsIntoUi() {
+    const g = window.NexusAI?.config.guardrails || {};
+    const map = {
+        guardEnabled: g.enabled !== false,
+        guardBannedWords: (g.bannedWords || []).join(', '),
+        guardDisclaimer: g.requiredDisclaimer || '',
+        guardMaxHashtags: Number.isFinite(g.maxHashtags) ? g.maxHashtags : 30,
+        guardAllowEmoji: g.allowEmoji !== false,
+    };
+    const en = document.getElementById('guardEnabled'); if (en) en.checked = map.guardEnabled;
+    const bw = document.getElementById('guardBannedWords'); if (bw) bw.value = map.guardBannedWords;
+    const dl = document.getElementById('guardDisclaimer'); if (dl) dl.value = map.guardDisclaimer;
+    const mh = document.getElementById('guardMaxHashtags'); if (mh) mh.value = map.guardMaxHashtags;
+    const ae = document.getElementById('guardAllowEmoji'); if (ae) ae.checked = map.guardAllowEmoji;
+}
+
+function saveGuardrails() {
+    const g = readGuardrailsFromUi();
+    if (window.NexusAI) window.NexusAI.saveConfig({ guardrails: g });
+    AgentLog.info('settings.guardrails', 'Brand guardrails updated', g);
+    showToast('Brand guardrails saved — applied to every future generation', 'success');
+}
+
 function copyScheduleCmd() {
-    const cmd = document.getElementById('scheduleCmd').textContent;
-    navigator.clipboard.writeText(cmd).then(() => showToast('Schedule command copied!', 'success'));
+    const cmd = document.getElementById('scheduleCmd')?.textContent || '';
+    copyToClipboard(cmd).then(ok => showToast(ok ? 'Schedule command copied!' : 'Copy failed', ok ? 'success' : 'error'));
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -1530,10 +1870,78 @@ function copyScheduleCmd() {
    present; otherwise shows the exact CLI command + simulated result
    so the workflow is learnable offline. Permission-gated actions.
 ══════════════════════════════════════════════════════════════ */
-const RELAY_URL = 'http://localhost:8712';
+/* ══════════════════════════════════════════════════════════════
+   LOCAL RELAY CLIENT
+   The browser cannot execute Python, so all machine-side work
+   (browser automation, publishing, queue) goes through
+   `python3 agent/nexus_relay.py` on 127.0.0.1:8712.
+
+   Security: the relay validates Origin AND (optionally) a shared
+   token. The token is stored here and sent as X-Nexus-Token so a
+   random website you have open cannot drive your machine.
+═════════════════════════════════════════════════════════════ */
+const RELAY_URL = 'http://127.0.0.1:8712';
+
+function relayToken() {
+    return safeJson('nexus_credentials', {})['relay-token'] || '';
+}
+
+function saveRelayToken() {
+    const token = document.getElementById('relayToken')?.value.trim() || '';
+    const creds = safeJson('nexus_credentials', {});
+    if (token) creds['relay-token'] = token; else delete creds['relay-token'];
+    localStorage.setItem('nexus_credentials', JSON.stringify(creds));
+    showToast(token ? 'Relay token saved' : 'Relay token cleared', 'success');
+    checkRelayHealth();
+}
+
+/** Low-level relay call. Returns the parsed body plus the HTTP status. */
+async function relayCall(path, { method = 'POST', body = null, ms = 30000 } = {}) {
+    const headers = { 'Content-Type': 'application/json' };
+    const token = relayToken();
+    if (token) headers['X-Nexus-Token'] = token;
+    const res = await fetchWithTimeout(`${RELAY_URL}${path}`, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+    }, ms);
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    if (!res.ok) {
+        const err = new Error(data?.error || data?.reason || `relay HTTP ${res.status}`);
+        err.status = res.status;
+        err.data = data;
+        throw err;
+    }
+    return data;
+}
+
+/** Probe the relay and paint the status chip. Safe to call on every page load. */
+async function checkRelayHealth() {
+    const chip = document.getElementById('relayChip');
+    try {
+        const data = await relayCall('/health', { method: 'GET', ms: 2500 });
+        if (chip) {
+            chip.textContent = `🟢 Relay online · v${data.version || '?'} · queue ${data.queue ?? 0}`;
+            chip.style.color = '#4ade80';
+        }
+        State.relayOnline = true;
+        return data;
+    } catch (e) {
+        if (chip) {
+            chip.textContent = e.status === 401
+                ? '🔑 Relay online but the token is wrong — paste it in Settings'
+                : '⚪ Relay offline — run: python3 agent/nexus_relay.py';
+            chip.style.color = e.status === 401 ? '#f87171' : '';
+        }
+        State.relayOnline = false;
+        return null;
+    }
+}
+
 const BROWSER_DENY = [
     /delete[_ -]?(my[_ -])?account/i, /log\s*out/i, /sign\s*out/i,
-    /remove[_ -]?payment/i, /cancel[_ -]?subscription/i,
+    /remove[_ -]?payment/i, /cancel[_ -]?subscription/i, /\bclose[_ -]?account\b/i,
 ];
 
 function browserPermissionGranted() {
@@ -1623,48 +2031,59 @@ async function browserCmd(cmd) {
     }
 
     AgentLog.info('browser.cmd', `Dispatching browser command: ${cmd}`, { url, sel });
-    browserOut(`⏳ ${cmd} … trying local relay (${RELAY_URL})`);
+    browserOut(`⏳ ${cmd} … talking to the local relay (${RELAY_URL})`);
 
-    // Try real execution via the Python relay (agent/nexus_relay.py or any HTTP shim)
+    // Real execution via the Python relay (agent/nexus_relay.py).
     try {
-        const res = await fetchWithTimeout(`${RELAY_URL}/browser`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ cmd, url, selector: sel, value,
-                                    allowActions: isAction && browserPermissionGranted() }),
-        }, 20000);
-        if (res.ok) {
-            const data = await res.text();
-            browserOut(`✅ ${cmd} completed via relay\n\n${data.slice(0, 6000)}`);
-            AgentLog.success('browser.cmd', `${cmd} executed on real browser`, { url, sel });
-            showToast(`Browser: ${cmd} done`, 'success');
-            return;
-        }
-        // BUG FIX: a 403 from the relay is a POLICY BLOCK (real answer), not an
-        // offline relay. Show the refusal instead of falling through to simulation.
-        if (res.status === 403) {
-            let reason = '';
-            try { reason = (await res.json()).reason || ''; } catch (_) {}
+        const data = await relayCall('/browser', {
+            body: { cmd, url, selector: sel, value, allowActions: isAction && browserPermissionGranted() },
+            ms: 95000,
+        });
+        const stdout = data?.stdout || JSON.stringify(data, null, 2);
+        browserOut(`✅ ${cmd} completed on the real browser\n\n${String(stdout).slice(0, 8000)}`);
+        AgentLog.success('browser.cmd', `${cmd} executed on the real browser`, { url, sel });
+        showToast(`Browser: ${cmd} done`, 'success');
+        State.relayOnline = true;
+        return;
+    } catch (e) {
+        // 403 = a deliberate policy refusal, not an offline relay. Surfacing the
+        // refusal is the whole point; never hide it behind a simulated result.
+        if (e.status === 403) {
+            const reason = e.data?.reason || e.message;
             browserOut(`⛔ BLOCKED by the agent's permission policy:\n\n${reason}\n\nCLI equivalent:\n${cliFor(cmd, url, sel, value)}`);
             AgentLog.warn('browser.blocked', `Relay refused ${cmd} (policy block)`, { url, sel });
             showToast('Browser action blocked — permission required', 'error');
             return;
         }
-        throw new Error(`relay HTTP ${res.status}`);
-    } catch (e) {
-        // Offline fallback: show exact reproducible command + simulated demo output
+        if (e.status === 401) {
+            browserOut('🔑 The relay rejected the request token.\n\nPaste the token printed when you started `python3 agent/nexus_relay.py` into Settings → Relay token.');
+            AgentLog.error('browser.auth', 'Relay token mismatch');
+            return;
+        }
+        if (e.status === 500 && e.data) {
+            browserOut(`❌ ${cmd} failed inside the browser skill:\n\n${JSON.stringify(e.data, null, 2).slice(0, 4000)}`);
+            AgentLog.error('browser.cmd', `${cmd} failed: ${e.data.stderr || e.data.error || 'unknown'}`, e.data);
+            showToast(`Browser: ${cmd} failed — see the output panel`, 'error');
+            return;
+        }
+        // Offline: show the exact reproducible command + an explicitly labelled demo
         const sim = simulateBrowserResult(cmd, url, sel);
         browserOut(
-`ℹ️ Local relay not running (${e.message}). Here is the exact command your machine will execute once you run:
-   pip install playwright && playwright install chromium
-   python3 agent/nexus_relay.py        # tiny stdlib HTTP→CLI bridge
+`ℹ️ Local relay not running (${e.message}).
 
+Start it in a terminal inside the project folder:
+   pip install playwright && playwright install chromium
+   python3 agent/nexus_relay.py        # stdlib HTTP → CLI bridge on 127.0.0.1:8712
+
+Then this button runs:
 $ ${cliFor(cmd, url, sel, value)}
 
-── SIMULATED RESULT (for training/demo) ──
+── SIMULATED RESULT — NOT a real page (demo only) ──
 ${sim}
 
-Everything above is logged to Agent Logs + logs/browser_audit.jsonl when run for real.`);
+Real runs are appended to Agent Logs and logs/browser_audit.jsonl.`);
         AgentLog.info('browser.sim', `${cmd} simulated (relay offline)`, { url, sel });
+        State.relayOnline = false;
     }
 }
 
@@ -1707,18 +2126,22 @@ const MCP_TOOLS_CATALOG = [
     ['render_video',       'Poster images → MP4 (FFmpeg now; After Effects bridge next)'],
     ['telegram_notify',    'Push reports/messages to your Telegram'],
     ['read_agent_logs',    'Pull browser+agent audit log for debugging'],
+    ['publish_post',       'Publish to a live platform (needs credentials)'],
+    ['read_publish_queue', 'Queued, scheduled and completed publish jobs'],
 ];
 
 function copyMcpCmd() {
     const txt = document.getElementById('mcpCmdBlock')?.textContent || '';
-    navigator.clipboard.writeText(txt).then(() => showToast('MCP config copied — paste into Claude Desktop / Antigravity / LM Studio', 'success'));
+    copyToClipboard(txt).then(ok => showToast(
+        ok ? 'MCP config copied — paste into Claude Desktop / Antigravity / LM Studio' : 'Copy blocked by the browser',
+        ok ? 'success' : 'error'));
 }
 
 function showMcpTools() {
     const out = document.getElementById('mcpToolsOut');
     if (!out) return;
     out.classList.remove('hidden');
-    out.textContent = 'nexus-social-manager v2.0 exposes ' + MCP_TOOLS_CATALOG.length + ' tools:\n\n' +
+    out.textContent = 'nexus-social-manager v3.0 exposes ' + MCP_TOOLS_CATALOG.length + ' tools:\n\n' +
         MCP_TOOLS_CATALOG.map(([n, d]) => `• ${n.padEnd(20)} ${d}`).join('\n') +
         '\n\nVerify live: python3 agent/nexus_mcp.py --self-test';
     AgentLog.info('integrations.mcp', 'Tool catalog displayed', { count: MCP_TOOLS_CATALOG.length });
@@ -1825,6 +2248,19 @@ document.getElementById('saveDraftBtn')?.addEventListener('click', () => {
     renderQuickTemplates();
     AgentLog.updateErrorBadge();
 
+    // Relay health, Canva OAuth callback and guardrail state are all resolved
+    // asynchronously and must never block first paint.
+    // NOTE: only call things whose dependencies are already initialised here.
+    // `applyUtmPreset()` must NOT be called from this IIFE: it reads the
+    // UTM_PRESETS const declared further down the file, and touching it this
+    // early threw a ReferenceError that aborted init() entirely. The UTM page
+    // prefills itself via switchPage('utm') instead.
+    initChrome();
+    checkRelayHealth();
+    handleCanvaCallback().catch(() => {});
+    loadGuardrailsIntoUi();
+    initCommandPalette();
+
     // Populate Brand & Settings fields from state
     if (document.getElementById('brandName')) {
         document.getElementById('brandName').value = State.settings.brand || 'My Brand';
@@ -1881,66 +2317,154 @@ document.getElementById('saveDraftBtn')?.addEventListener('click', () => {
 })();
 
 /* ══════════════════════════════════════════════════════════════
-   TRENDS MODULE (Simulated Live Data)
-══════════════════════════════════════════════════════════════ */
+   TREND RADAR
+   HONESTY FIX: this used to render hard-coded, invented numbers
+   ("1.2M mentions", "+45% this week") with no label, and toast
+   "Trends updated successfully" — i.e. fabricated data presented
+   as live. For a marketing tool that is a real liability: someone
+   could put those figures in a client deck.
+
+   Two modes now:
+     1. Seed examples, clearly watermarked "EXAMPLE DATA" until a
+        real source is loaded.
+     2. Paste your own source (a platform export, Google Trends CSV,
+        or notes) → the configured AI engine turns it into ranked,
+        prioritised opportunities you can act on today.
+═════════════════════════════════════════════════════════════ */
+const TREND_SEED = {
+    label: 'EXAMPLE DATA — not live metrics',
+    topics: [
+        { rank: 1, title: 'AI-assisted content workflows', meta: 'Evergreen demand — teach a specific workflow, not the tool' },
+        { rank: 2, title: 'Short-form video SEO', meta: 'High intent — pair with a long-form YouTube version' },
+        { rank: 3, title: 'Micro-communities over megaphones', meta: 'Strong B2B fit — newsletter + private group play' },
+    ],
+    audio: [
+        { rank: 1, title: 'Calm lo-fi instrumental', meta: 'Best for authority/education reels' },
+        { rank: 2, title: 'Fast percussive transition', meta: 'Best for listicle and before/after edits' },
+        { rank: 3, title: 'Voiceover-first (no music bed)', meta: 'Best retention for tutorials over 30s' },
+    ],
+    hashtags: [
+        { rank: 1, title: '#digitalmarketing', meta: 'Mega tier — reach, low intent' },
+        { rank: 2, title: '#contentstrategy', meta: 'Large tier — balanced' },
+        { rank: 3, title: '#marketingworkflow', meta: 'Niche tier — highest engagement rate' },
+    ],
+};
+
+let trendSourceText = '';
+
 function fetchTrends() {
     const btn = document.getElementById('refreshTrendsBtn');
     if (btn) btn.disabled = true;
+    renderTrendWatermark(TREND_SEED.label);
 
-    // Reset UI to skeleton
-    const ids = ['viralTopicsList', 'viralAudioList', 'viralHashtagsList'];
-    ids.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-            el.innerHTML = '<div class="trend-skeleton"></div><div class="trend-skeleton"></div><div class="trend-skeleton"></div>';
-        }
-    });
-
-    // Simulate network delay for realism
     setTimeout(() => {
         if (btn) btn.disabled = false;
+        renderTrendList('viralTopicsList', TREND_SEED.topics);
+        renderTrendList('viralAudioList', TREND_SEED.audio);
+        renderTrendList('viralHashtagsList', TREND_SEED.hashtags);
+        showToast('Loaded the example trend set — paste your own source for real data', 'info');
+    }, 400);
+}
 
-        // Simulated trending topics
-        const topics = [
-            { rank: 1, title: 'AI in Marketing 2026', meta: 'Trending globally • 1.2M mentions' },
-            { rank: 2, title: 'Short-form Video SEO', meta: 'Rising trend • +45% this week' },
-            { rank: 3, title: 'Micro-communities', meta: 'Tech & B2B • 500K engagements' }
-        ];
+function renderTrendWatermark(text) {
+    const el = document.getElementById('trendSourceNote');
+    if (el) {
+        el.textContent = text;
+        el.style.color = text.startsWith('EXAMPLE') ? '#fbbf24' : '';
+    }
+}
 
-        // Simulated trending audio
-        const audio = [
-            { rank: 1, title: 'Corporate Lofi Beats', meta: '342K Reels • Used by top creators' },
-            { rank: 2, title: 'Trending Transition Sound', meta: 'Viral on TikTok • 1.1M uses' },
-            { rank: 3, title: 'Upbeat Instrumental (No Copyright)', meta: '189K Shorts • High retention' }
-        ];
+function renderTrendList(id, data) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = data.map(item => `
+        <div class="trend-item fade-up">
+            <div class="trend-rank">#${escHtml(String(item.rank))}</div>
+            <div class="trend-info">
+                <div class="trend-title">${escHtml(item.title)}</div>
+                <div class="trend-meta">${escHtml(item.meta)}</div>
+            </div>
+        </div>
+    `).join('');
+}
 
-        // Simulated trending hashtags
-        const hashtags = [
-            { rank: 1, title: '#digitalmarketing2026', meta: 'Instagram & LinkedIn' },
-            { rank: 2, title: '#solopreneurlife', meta: 'Twitter/X & TikTok' },
-            { rank: 3, title: '#marketinghacks', meta: 'Cross-platform • +120% growth' }
-        ];
+/**
+ * Turn a pasted trend source into actionable, prioritised angles using the
+ * configured AI engine. This is the genuinely valuable half of the page.
+ */
+async function analyzeTrends() {
+    const input = document.getElementById('trendSourceInput');
+    const out = document.getElementById('trendAnalysisOutput');
+    const btn = document.getElementById('trendAnalyzeBtn');
+    const text = (input?.value || '').trim();
+    if (!text) { showToast('Paste your trend source first (CSV, export or notes).', 'info'); return; }
+    if (!out) return;
 
-        const renderList = (id, data) => {
-            const el = document.getElementById(id);
-            if (!el) return;
-            el.innerHTML = data.map(item => `
-                <div class="trend-item fade-up">
-                    <div class="trend-rank">#${item.rank}</div>
-                    <div class="trend-info">
-                        <div class="trend-title">${escHtml(item.title)}</div>
-                        <div class="trend-meta">${escHtml(item.meta)}</div>
-                    </div>
-                </div>
-            `).join('');
-        };
+    trendSourceText = text;
+    const rows = parseTrendSource(text);
+    renderTrendSourceSummary(rows);
 
-        renderList('viralTopicsList', topics);
-        renderList('viralAudioList', audio);
-        renderList('viralHashtagsList', hashtags);
+    btn && (btn.disabled = true);
+    out.innerHTML = '<div class="agent-feedback"><div class="spinner-ring"></div><span>Analysing opportunities…</span></div>';
 
-        showToast('Trends updated successfully', 'success');
-    }, 1200);
+    const instruction =
+`You are given raw trend data for the brand "${State.settings.brand || 'the brand'}" (niche: ${State.settings.niche || 'unspecified'}, audience: ${State.settings.audience || 'unspecified'}).
+
+RAW TREND SOURCE:
+${text.slice(0, 6000)}
+
+Task:
+1. Rank the top 5 opportunities for THIS brand and audience. For each give: the trend, why it fits, the specific content angle to publish, the best platform and format, and a 0-100 confidence score.
+2. Flag any trend that is NOT worth pursuing for this brand, and say why.
+3. Give one 7-day posting sequence that rides the top opportunity.
+Use a markdown table for the ranked opportunities. Do not invent metrics that are not in the source data — if a number is unavailable, write "n/a".`;
+
+    try {
+        const results = await window.NexusAI.generate({
+            instruction,
+            platforms: ['trend analysis'],
+            tone: 'analytical',
+            brand: State.settings.brand || 'My Brand',
+            contentType: 'trend analysis',
+            context: 'Output a ranked opportunity table, not a social post.',
+            onLog: (level, source, message, detail) => (AgentLog[level] || AgentLog.info).call(AgentLog, source, message, detail),
+        });
+        const content = results['trend analysis'] || Object.values(results)[0] || '';
+        out.innerHTML = `<div class="content-block">${renderContent(content)}</div>`;
+        AgentLog.success('trends', 'Trend source analysed', { chars: text.length, rows: rows.length });
+        showToast('Opportunity analysis ready', 'success');
+    } catch (e) {
+        out.innerHTML = `<div class="content-block error-block">Analysis failed: ${escHtml(e.message)}</div>`;
+        AgentLog.error('trends', 'Trend analysis failed', e.message);
+    } finally {
+        btn && (btn.disabled = false);
+    }
+}
+
+/** Best-effort CSV/TSV parser so pasted exports are actually understood. */
+function parseTrendSource(text) {
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const delim = lines[0]?.includes('\t') ? '\t' : ',';
+    return lines.slice(0, 800).map(line => {
+        const cells = line.split(delim).map(c => c.trim().replace(/^"|"$/g, ''));
+        return { term: cells[0], volume: cells[1] || '', delta: cells.slice(2).join(' ') };
+    }).filter(r => r.term);
+}
+
+function renderTrendSourceSummary(rows) {
+    const el = document.getElementById('trendSourceSummary');
+    if (!el) return;
+    if (!rows.length) { el.textContent = ''; return; }
+    const looksLikeHeader = /term|keyword|trend|search|hashtag|topic/i.test(rows[0].term);
+    el.textContent = `Parsed ${rows.length} row(s)${looksLikeHeader ? ' (first row looks like a header)' : ''} — first: "${rows[0].term}"`;
+}
+
+function clearTrendSource() {
+    const input = document.getElementById('trendSourceInput');
+    const out = document.getElementById('trendAnalysisOutput');
+    if (input) input.value = '';
+    if (out) out.innerHTML = '<p class="helper-text">No analysis yet.</p>';
+    renderTrendSourceSummary([]);
 }
 
 document.getElementById('refreshTrendsBtn')?.addEventListener('click', fetchTrends);
@@ -2047,7 +2571,7 @@ const CRED_FIELDS = {
     facebook:  ['fb-page-token', 'fb-page-id'],
     youtube:   ['yt-client-id', 'yt-client-secret', 'yt-refresh-token', 'yt-channel-id'],
     twitter:   ['tw-api-key', 'tw-api-secret', 'tw-access-token', 'tw-access-secret', 'tw-bearer-token'],
-    linkedin:  ['li-client-id', 'li-client-secret', 'li-access-token'],
+    linkedin:  ['li-client-id', 'li-client-secret', 'li-access-token', 'li-person-urn'],
     blogger:   ['bl-access-token', 'bl-blog-id'],
     canva:     ['canva-client-id', 'canva-client-secret', 'canva-access-token'],
 };
@@ -2148,67 +2672,666 @@ function testAllConnections() {
 }
 
 /* ── Publish Pipeline ─────────────────────────────────────────── */
-function previewAutoPost() {
-    const content = document.getElementById('autoPostContent')?.value;
-    const platforms = [...document.querySelectorAll('input[name="autoPlat"]:checked')].map(cb => cb.value);
-    const media = document.getElementById('autoPostMedia')?.value;
-    const schedule = document.getElementById('autoPostSchedule')?.value;
 
-    if (!content) { showToast('Please write some content first.', 'info'); return; }
-
-    const log = document.getElementById('publishLog');
-    log.innerHTML = `
-        <div class="log-entry log-info"><i class="ph ph-eye"></i> <strong>Validation Preview for ${platforms.join(', ')}</strong></div>
-        <div class="log-entry log-pending"><i class="ph ph-text-align-left"></i> Content: "${content.substring(0, 80)}${content.length > 80 ? '...' : ''}" (${content.length} chars)</div>
-        ${media ? `<div class="log-entry log-pending"><i class="ph ph-image"></i> Media Asset: ${media}</div>` : '<div class="log-entry log-pending"><i class="ph ph-image"></i> Media: Text-only post</div>'}
-        ${schedule ? `<div class="log-entry log-pending"><i class="ph ph-clock"></i> Target Schedule: ${new Date(schedule).toLocaleString()}</div>` : '<div class="log-entry log-pending"><i class="ph ph-clock"></i> Target Schedule: Immediate Publish</div>'}
-    `;
+/** Turn the rich 6-tier editor copy into a clean publishable body. */
+function stripMarkdown(text) {
+    return String(text || '')
+        .replace(/```[\s\S]*?```/g, m => m.replace(/```[a-z]*\n?/gi, ''))
+        .replace(/^#{1,6}\s+/gm, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/\*([^*\n]+)\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/^>\s?/gm, '')
+        .trim();
 }
 
-function publishNow() {
+/** Platform rules that produce silent API failures if ignored. */
+const PLATFORM_LIMITS = {
+    twitter: { chars: 280, label: 'X / Twitter' },
+    instagram: { chars: 2200, label: 'Instagram', requiresMedia: true },
+    facebook: { chars: 63206, label: 'Facebook' },
+    linkedin: { chars: 3000, label: 'LinkedIn' },
+    blogger: { chars: 100000, label: 'Blogger' },
+};
+
+function previewAutoPost() {
+    const content = document.getElementById('autoPostContent')?.value || '';
+    const platforms = [...document.querySelectorAll('input[name="autoPlat"]:checked')].map(cb => cb.value);
+    const media = document.getElementById('autoPostMedia')?.value?.trim() || '';
+    const schedule = document.getElementById('autoPostSchedule')?.value || '';
+    const log = document.getElementById('publishLog');
+    if (!log) return;
+
+    if (!content) { showToast('Please write some content first.', 'info'); return; }
+    if (!platforms.length) { showToast('Select at least one platform.', 'info'); return; }
+
+    const clean = stripMarkdown(content);
+    const urlMatch = clean.match(/https?:\/\/\S+/);
+    const rows = platforms.map(p => {
+        const rule = PLATFORM_LIMITS[p] || { chars: 5000, label: p };
+        const over = clean.length > rule.chars;
+        const problems = [];
+        if (over) problems.push(`${clean.length - rule.chars} chars over the ${rule.chars} limit`);
+        if (rule.requiresMedia && !media) problems.push('needs a public image URL (Graph API requirement)');
+        if (p === 'linkedin' && urlMatch && !/link in (the )?first comment/i.test(clean)) {
+            problems.push('external link in the post body — LinkedIn suppresses reach; move it to the first comment');
+        }
+        return { p, rule, problems };
+    });
+
+    const blocked = rows.filter(r => r.problems.length);
+    log.innerHTML = `
+        <div class="log-entry log-info"><i class="ph ph-eye"></i> <strong>Pre-flight check</strong> — ${platforms.length} platform(s) · ${clean.length} characters after markdown cleanup</div>
+        ${rows.map(r => r.problems.length
+            ? `<div class="log-entry log-error"><i class="ph ph-warning"></i> <strong>${escHtml(r.rule.label)}:</strong> ${escHtml(r.problems.join('; '))}</div>`
+            : `<div class="log-entry log-success"><i class="ph ph-check-circle"></i> <strong>${escHtml(r.rule.label)}:</strong> ready</div>`
+        ).join('')}
+        ${media ? `<div class="log-entry log-pending"><i class="ph ph-image"></i> Media: ${escHtml(media)}</div>` : '<div class="log-entry log-pending"><i class="ph ph-image"></i> Media: text-only post</div>'}
+        ${schedule ? `<div class="log-entry log-pending"><i class="ph ph-clock"></i> Scheduled for ${escHtml(new Date(schedule).toLocaleString())}</div>` : '<div class="log-entry log-pending"><i class="ph ph-clock"></i> Publishes immediately</div>'}
+        <div class="log-entry ${blocked.length ? 'log-error' : 'log-success'}">
+            <i class="ph ${blocked.length ? 'ph-x-circle' : 'ph-check-circle'}"></i>
+            ${blocked.length ? 'Fix the flagged platforms before publishing — the APIs reject them.' : 'All platforms pass. Safe to publish.'}
+        </div>`;
+}
+
+function publishCredSlice(saved) {
+    const keys = [
+        'ig-access-token', 'ig-account-id', 'fb-page-token', 'fb-page-id',
+        'tw-bearer-token', 'li-access-token', 'li-person-urn',
+        'bl-access-token', 'bl-blog-id',
+    ];
+    const out = {};
+    keys.forEach(k => { if (saved[k]) out[k] = saved[k]; });
+    return out;
+}
+
+function appendPublishLog(html) {
+    const log = document.getElementById('publishLog');
+    if (log) log.innerHTML += html;
+}
+
+function persistPublishQueue(job) {
+    const q = safeJson('nexus_publish_queue', []);
+    q.push(job);
+    localStorage.setItem('nexus_publish_queue', JSON.stringify(q.slice(-200)));
+}
+
+/**
+ * Queue a job. The relay owns the persistent queue (logs/publish_queue.json)
+ * so scheduled posts survive a browser restart; the browser copy is a mirror
+ * for the dashboard KPIs.
+ */
+async function queuePublishJob(job) {
+    const data = await relayCall('/publish', { body: job, ms: 120000 });
+    job.status = data?.status || 'published';
+    persistPublishQueue(job);
+    return data;
+}
+
+async function publishNow(dryRun = false) {
     const content = document.getElementById('autoPostContent')?.value;
     const platforms = [...document.querySelectorAll('input[name="autoPlat"]:checked')].map(cb => cb.value);
+    const media = document.getElementById('autoPostMedia')?.value.trim() || '';
+    const schedule = document.getElementById('autoPostSchedule')?.value || '';
 
     if (!content) { showToast('Please write some post content first.', 'info'); return; }
     if (!platforms.length) { showToast('Select at least one platform.', 'info'); return; }
 
     const log = document.getElementById('publishLog');
-    log.innerHTML = `<div class="log-entry log-info"><i class="ph ph-spinner" style="animation:spin .7s linear infinite"></i> Verifying credentials and dispatching to publishing queue...</div>`;
+    const saved = safeJson('nexus_credentials', {});
+    const job = {
+        id: `job-${Date.now()}`,
+        content,
+        platforms,
+        media,
+        schedule: schedule ? new Date(schedule).toISOString() : null,
+        status: schedule ? 'scheduled' : 'queued',
+        dry_run: dryRun,
+        created_at: new Date().toISOString(),
+        credentials: publishCredSlice(saved),
+    };
 
-    const saved = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
+    if (log) {
+        log.innerHTML = `<div class="log-entry log-info"><i class="ph ph-spinner" style="animation:spin .7s linear infinite"></i> ${dryRun ? 'Validation run' : 'Dispatching'} → local publisher (agent/publish.py via relay)…</div>`;
+    }
 
-    platforms.forEach((platform, i) => {
-        setTimeout(() => {
-            const tokenField = {
-                instagram: 'ig-access-token',
-                facebook:  'fb-page-token',
-                youtube:   'yt-refresh-token',
-                twitter:   'tw-bearer-token',
-                linkedin:  'li-access-token',
-                blogger:   'bl-access-token',
-            }[platform];
+    if (platforms.includes('instagram') && !media) {
+        appendPublishLog('<div class="log-entry log-error"><i class="ph ph-instagram-logo"></i> Instagram Graph API needs a public Media URL — this platform will fail while the others continue.</div>');
+    }
 
-            const hasToken = tokenField && (saved[tokenField] || document.getElementById(tokenField)?.value);
-            const icon = { instagram: 'ph-fill ph-instagram-logo', facebook: 'ph-fill ph-facebook-logo', youtube: 'ph-fill ph-youtube-logo', twitter: 'ph-fill ph-twitter-logo', linkedin: 'ph-fill ph-linkedin-logo', blogger: 'ph ph-globe-simple' }[platform] || 'ph ph-check';
+    try {
+        const data = await queuePublishJob(job);
+        const results = data?.results || data?.jobs || [data];
+        (Array.isArray(results) ? results : [results]).forEach(r => {
+            const ok = r.ok || r.status === 'published' || r.dry_run;
+            const plat = r.platform || (r.platforms || []).join(', ');
+            const detail = ok
+                ? (r.dry_run ? 'Validated (dry run) — no API call made' : `Posted${r.id ? ` id=${r.id}` : ''}`)
+                : (typeof r.error === 'string' ? r.error : JSON.stringify(r.error || r));
+            appendPublishLog(`<div class="log-entry ${ok ? 'log-success' : 'log-error'}"><i class="ph ph-paper-plane-tilt"></i> <strong>${escHtml(String(plat))}:</strong> ${escHtml(detail)}</div>`);
+        });
+        if (schedule) {
+            appendPublishLog(`<div class="log-entry log-pending"><i class="ph ph-clock-clockwise"></i> Scheduled job <code>${escHtml(job.id)}</code> is stored in logs/publish_queue.json. Publish it when due with: <code>python3 agent/publish.py --due</code></div>`);
+        }
+        AgentLog.success('publish', `Publish job ${job.id} → ${data?.status || 'done'}`);
+        showToast(schedule ? 'Post scheduled on the local queue.' : 'Publish job completed.', 'success');
+    } catch (err) {
+        persistPublishQueue(job);
+        const why = err.status === 401
+            ? 'the relay token is wrong (Settings → Relay token)'
+            : err.status
+                ? `the relay answered HTTP ${err.status}`
+                : 'the local relay is not reachable';
+        appendPublishLog(`<div class="log-entry log-error"><i class="ph ph-warning"></i> Not sent — ${escHtml(why)}. The job is saved in the browser queue.</div>
+            <div class="log-entry log-pending">Start the relay, then retry:<br><code>python3 agent/nexus_relay.py</code></div>`);
+        AgentLog.error('publish', `Publish failed: ${why}`, err.message);
+        showToast('Queued locally — start the Nexus relay to post to live APIs.', 'info');
+    }
+    refreshQueueView();
+}
 
-            const label = platform.charAt(0).toUpperCase() + platform.slice(1);
-            if (hasToken) {
-                log.innerHTML += `<div class="log-entry log-success"><i class="${icon}"></i> <strong>${label}:</strong> Payload validated with saved credentials! Ready to push via Python daemon / webhook. ✓ <small style="margin-left:auto;opacity:.6">${new Date().toLocaleTimeString()}</small></div>`;
-                if (typeof AgentLog !== 'undefined') {
-                    AgentLog.info('publish', `${label}: payload validated and queued for publish`);
-                }
-            } else {
-                log.innerHTML += `<div class="log-entry log-error"><i class="${icon}"></i> <strong>${label}:</strong> Missing credentials. Go to Connected Accounts to configure API token.</div>`;
-                if (typeof AgentLog !== 'undefined') {
-                    AgentLog.error('publish', `${platform}: publish FAILED — no access token stored`, { field: tokenField });
-                }
-            }
-        }, (i + 1) * 500);
+/** Dry-run: validates every credential + payload WITHOUT posting publicly. */
+function validatePublish() {
+    publishNow(true);
+}
+
+/* ── Queue viewer (real state from the relay) ─────────────────── */
+async function refreshQueueView() {
+    const host = document.getElementById('queueList');
+    if (!host) return;
+    host.innerHTML = '<p class="helper-text">Loading queue…</p>';
+    try {
+        const data = await relayCall('/queue', { method: 'GET', ms: 6000 });
+        const jobs = data?.jobs || [];
+        const counts = data?.counts || {};
+        const summary = document.getElementById('queueSummary');
+        if (summary) {
+            summary.textContent = `${jobs.length} job(s) · ${counts.published || 0} published · ${counts.failed || 0} failed · ${counts.scheduled || 0} scheduled · ${counts.queued || 0} queued`;
+        }
+        if (!jobs.length) {
+            host.innerHTML = '<p class="helper-text">The local queue is empty. Publish or schedule something above.</p>';
+            return;
+        }
+        host.innerHTML = jobs.slice().reverse().map(j => {
+            const st = String(j.status || 'unknown');
+            const cls = st === 'published' ? 'log-success' : st === 'failed' ? 'log-error' : 'log-pending';
+            const results = (j.results || []).map(r =>
+                `${r.platform}: ${r.ok ? '✔' : '✘ ' + escHtml(String(r.error || 'failed').slice(0, 80))}`).join(' · ');
+            return `<div class="log-entry ${cls}">
+                <i class="ph ph-package"></i>
+                <strong>${escHtml(String(j.id || '?'))}</strong>
+                <span class="chip">${escHtml(st)}</span>
+                <div class="queue-meta">${escHtml(String((j.content || '').slice(0, 110)))}${(j.content || '').length > 110 ? '…' : ''}</div>
+                <div class="queue-meta">${escHtml((j.platforms || []).join(', '))}${j.schedule ? ` · scheduled ${escHtml(new Date(j.schedule).toLocaleString())}` : ''}${results ? ` · ${results}` : ''}</div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        const summary = document.getElementById('queueSummary');
+        if (summary) summary.textContent = '';
+        host.innerHTML = `<p class="helper-text">Queue unavailable — ${escHtml(e.status === 401 ? 'relay token rejected (Settings → Relay token).' : 'start the relay: <code>python3 agent/nexus_relay.py</code>')}</p>`;
+    }
+}
+
+async function publishDueJobs() {
+    try {
+        const data = await relayCall('/publish-due', { body: {}, ms: 180000 });
+        showToast(`Processed ${data?.processed ?? 0} due job(s)`, 'success');
+        AgentLog.info('publish', `--due run processed ${data?.processed ?? 0} job(s)`);
+    } catch (e) {
+        showToast(`Could not process the queue: ${e.message}`, 'error');
+        AgentLog.error('publish', 'Queue processing failed', e.message);
+    }
+    refreshQueueView();
+}
+
+function sendOutputToPublisher() {
+    const text = State.outputTabs[State.activeOutputTab] || Object.values(State.outputTabs || {})[0];
+    if (!text) { showToast('Generate content first.', 'info'); return; }
+    switchPage('accounts');
+    const ta = document.getElementById('autoPostContent');
+    if (ta) ta.value = stripMarkdown(text).slice(0, 4000);
+    previewAutoPost();
+    showToast('Copied into the publisher. Review the pre-flight check, pick platforms, then Publish.', 'success');
+}
+
+function addOutputToCalendar() {
+    const text = State.outputTabs[State.activeOutputTab] || '';
+    if (!text) { showToast('Generate content first.', 'info'); return; }
+    const title = (document.getElementById('agentInstruction')?.value || State.activeOutputTab || 'Generated post').slice(0, 80);
+    const today = new Date();
+    const date = today.toISOString().slice(0, 10);
+    State.calendarEvents.push({
+        id: `ev-${Date.now()}`,
+        title,
+        date,
+        time: '09:00',
+        platform: canonicalPlatform(State.activeOutputTab || 'instagram'),
+        status: 'draft',
+        body: text,
+    });
+    localStorage.setItem('nexus_calendar_events', JSON.stringify(State.calendarEvents));
+    AgentLog.info('calendar', `Draft added from Content Studio: "${title}"`);
+    showToast('Draft added to the content calendar.', 'success');
+    switchPage('calendar');
+}
+
+/** Normalise ui labels ("Twitter/X", "instagram") to the internal key. */
+function canonicalPlatform(value) {
+    const v = String(value || '').toLowerCase();
+    if (v.includes('twitter') || v === 'x') return 'twitter';
+    if (v.includes('ig') || v.includes('insta')) return 'instagram';
+    if (v.includes('fb') || v.includes('facebook')) return 'facebook';
+    if (v.includes('yt') || v.includes('youtube')) return 'youtube';
+    if (v.includes('li') || v.includes('linkedin')) return 'linkedin';
+    if (v.includes('blog')) return 'blog';
+    if (v.includes('tik')) return 'tiktok';
+    if (v.includes('mail')) return 'email';
+    return v || 'instagram';
+}
+
+/* ══════════════════════════════════════════════════════════════
+   UTM CAMPAIGN LINK BUILDER
+   Every CTA that leaves the app should be attributable. Marketers
+   lose weeks of data to untagged links; this makes tagging the
+   default rather than an afterthought.
+═════════════════════════════════════════════════════════════ */
+const UTM_PRESETS = {
+    instagram: { source: 'instagram', medium: 'social' },
+    facebook: { source: 'facebook', medium: 'social' },
+    linkedin: { source: 'linkedin', medium: 'social' },
+    twitter: { source: 'twitter', medium: 'social' },
+    tiktok: { source: 'tiktok', medium: 'social' },
+    youtube: { source: 'youtube', medium: 'video' },
+    email: { source: 'newsletter', medium: 'email' },
+    blog: { source: 'blog', medium: 'organic' },
+    ads: { source: 'meta', medium: 'paid_social' },
+    googleads: { source: 'google', medium: 'cpc' },
+};
+
+function utmSlug(value) {
+    return String(value || '').trim().toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function applyUtmPreset() {
+    const preset = UTM_PRESETS[document.getElementById('utmPreset')?.value] || UTM_PRESETS.instagram;
+    const s = document.getElementById('utmSource');
+    const m = document.getElementById('utmMedium');
+    if (s && !s.value) s.value = preset.source;
+    if (m && !m.value) m.value = preset.medium;
+    buildUtm();
+}
+
+function buildUtm() {
+    const out = document.getElementById('utmOutput');
+    if (!out) return;
+
+    const base = (document.getElementById('utmBase')?.value || '').trim();
+    const source = utmSlug(document.getElementById('utmSource')?.value);
+    const medium = utmSlug(document.getElementById('utmMedium')?.value);
+    const campaign = utmSlug(document.getElementById('utmCampaign')?.value);
+    const term = utmSlug(document.getElementById('utmTerm')?.value);
+    const content = utmSlug(document.getElementById('utmContent')?.value);
+
+    const problems = [];
+    if (!base) problems.push('Add the destination URL.');
+    else if (!/^https?:\/\//i.test(base)) problems.push('The destination URL must start with http:// or https://');
+    if (!source) problems.push('utm_source is required — it is what separates channels in GA4.');
+    if (!medium) problems.push('utm_medium is required (social, email, cpc, organic…).');
+    if (!campaign) problems.push('utm_campaign is required for campaign-level reporting.');
+
+    if (problems.length) {
+        out.textContent = `Fix first:\n• ${problems.join('\n• ')}`;
+        out.style.color = '#fbbf24';
+        return;
+    }
+
+    let url;
+    try {
+        url = new URL(base);
+    } catch {
+        out.textContent = 'That is not a valid URL.';
+        out.style.color = '#f87171';
+        return;
+    }
+
+    // Preserve any existing query params (e.g. an existing ?ref=).
+    url.searchParams.set('utm_source', source);
+    url.searchParams.set('utm_medium', medium);
+    url.searchParams.set('utm_campaign', campaign);
+    if (term) url.searchParams.set('utm_term', term);
+    if (content) url.searchParams.set('utm_content', content);
+
+    out.textContent = url.toString();
+    out.style.color = '';
+    return url.toString();
+}
+
+function copyUtm() {
+    const url = buildUtm();
+    if (typeof url !== 'string') { showToast('Complete the required fields first.', 'info'); return; }
+    copyToClipboard(url).then(ok => showToast(ok ? 'Tracked link copied' : 'Copy blocked by the browser', ok ? 'success' : 'error'));
+}
+
+/** Register the tracked link against the currently selected output. */
+function buildUtmForActiveOutput() {
+    const platform = canonicalPlatform(State.activeOutputTab || 'instagram');
+    switchPage('utm');
+    const preset = document.getElementById('utmPreset');
+    if (preset) preset.value = UTM_PRESETS[platform] ? platform : 'instagram';
+    const s = document.getElementById('utmSource');
+    const m = document.getElementById('utmMedium');
+    const p = UTM_PRESETS[preset?.value] || UTM_PRESETS.instagram;
+    if (s) s.value = p.source;
+    if (m) m.value = p.medium;
+    const camp = document.getElementById('utmCampaign');
+    if (camp && !camp.value) {
+        camp.value = utmSlug((document.getElementById('agentInstruction')?.value || 'campaign').slice(0, 40));
+    }
+    buildUtm();
+    showToast('Pre-filled for this platform — set the destination URL, then copy.', 'info');
+}
+
+/* ══════════════════════════════════════════════════════════════
+   CONTENT REPURPOSING
+   One strong idea should become six platform-native assets. This
+   runs the full engine so each variant is genuinely re-written for
+   its platform instead of being truncated.
+═════════════════════════════════════════════════════════════ */
+async function repurposeActiveOutput() {
+    const source = State.outputTabs[State.activeOutputTab] || '';
+    if (!source) { showToast('Generate content first.', 'info'); return; }
+
+    const targets = ['instagram', 'linkedin', 'twitter', 'facebook'];
+    const chosen = targets.filter(t => t !== canonicalPlatform(State.activeOutputTab));
+    if (!chosen.length) { showToast('Nothing to repurpose into.', 'info'); return; }
+
+    const feedback = document.getElementById('agentFeedback');
+    const feedbackText = document.getElementById('agentFeedbackText');
+    if (feedback) feedback.classList.remove('hidden');
+    if (feedbackText) feedbackText.textContent = `Repurposing into ${chosen.join(', ')}…`;
+    AgentLog.info('agent.repurpose', `Repurposing ${State.activeOutputTab} → ${chosen.join(', ')}`);
+
+    try {
+        const results = await window.NexusAI.generate({
+            instruction: `Repurpose the following ${State.activeOutputTab} asset for other platforms. Keep the same core message and CTA, but re-write it natively for each target platform — do not simply truncate it.\n\nSOURCE ASSET:\n${source.slice(0, 4000)}`,
+            platforms: chosen,
+            tone: State.settings.tone || 'professional',
+            brand: State.settings.brand,
+            contentType: 'repurpose',
+            context: 'Each output must stand alone and be publish-ready.',
+            onProgress: (m) => { if (feedbackText) feedbackText.textContent = m; },
+            onLog: (level, source2, message, detail) => (AgentLog[level] || AgentLog.info).call(AgentLog, source2, message, detail),
+        });
+        Object.assign(State.outputTabs, results);
+        renderOutputTabs(State.outputTabs);
+        const empty = document.getElementById('outputEmpty');
+        const tabs = document.getElementById('outputTabs');
+        if (empty) empty.classList.add('hidden');
+        if (tabs) tabs.classList.remove('hidden');
+        showToast(`Repurposed into ${Object.keys(results).length} extra platform(s)`, 'success');
+    } catch (e) {
+        AgentLog.error('agent.repurpose', 'Repurposing failed', e.message);
+        showToast(`Repurposing failed: ${e.message}`, 'error');
+    } finally {
+        if (feedback) feedback.classList.add('hidden');
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   PERFORMANCE ANALYTICS — REAL MATH
+   Paste a native platform export (Instagram/Facebook Insights, X
+   analytics, LinkedIn, GA4 or an ad-manager CSV) and Nexus computes
+   the metrics that actually drive decisions: engagement rate, CTR,
+   CPC, CPM, CPA and ROAS — per platform and blended.
+
+   No invented numbers: if a column is missing, the metric is left
+   blank rather than guessed.
+═════════════════════════════════════════════════════════════ */
+const METRIC_ALIASES = {
+    date: ['date', 'day', 'reporting starts', 'period'],
+    platform: ['platform', 'channel', 'network', 'source'],
+    campaign: ['campaign', 'campaign name', 'ad set', 'adset'],
+    impressions: ['impressions', 'impr', 'impressions total'],
+    reach: ['reach', 'accounts reached', 'unique reach'],
+    likes: ['likes', 'reactions', 'post reactions'],
+    comments: ['comments', 'replies'],
+    shares: ['shares', 'reposts', 'retweets', 'shares/retweets'],
+    saves: ['saves', 'bookmarks', 'saved'],
+    clicks: ['clicks', 'link clicks', 'clicks (all)', 'outbound clicks'],
+    conversions: ['conversions', 'results', 'purchases', 'leads', 'signups'],
+    spend: ['spend', 'amount spent', 'cost', 'ad spend'],
+    revenue: ['revenue', 'purchase value', 'conversion value', 'sales'],
+    video_views: ['video views', 'views', 'plays', '3-second video views'],
+};
+
+function parseDelimited(text) {
+    const lines = String(text || '').split(/\r?\n/).filter(l => l.trim());
+    if (!lines.length) return { header: [], rows: [] };
+    const delim = lines[0].includes('\t') ? '\t' : lines[0].split(';').length > lines[0].split(',').length ? ';' : ',';
+    // Minimal RFC4180-ish splitter that respects quoted fields.
+    const splitRow = (line) => {
+        const cells = [];
+        let cur = '', quoted = false;
+        for (let i = 0; i < line.length; i++) {
+            const ch = line[i];
+            if (quoted) {
+                if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+                else if (ch === '"') quoted = false;
+                else cur += ch;
+            } else if (ch === '"') quoted = true;
+            else if (ch === delim) { cells.push(cur); cur = ''; }
+            else cur += ch;
+        }
+        cells.push(cur);
+        return cells.map(c => c.trim());
+    };
+    const header = splitRow(lines[0]).map(h => h.toLowerCase());
+    const rows = lines.slice(1).map(splitRow).filter(r => r.some(c => c !== ''));
+    return { header, rows };
+}
+
+function numberOrNull(value) {
+    if (value === undefined || value === null) return null;
+    const cleaned = String(value).replace(/[^0-9.\-]/g, '');
+    if (cleaned === '' || cleaned === '-' || cleaned === '.') return null;
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
+}
+
+/** Map a CSV header row onto our canonical metric names. */
+function mapHeader(header) {
+    const map = {};
+    header.forEach((h, i) => {
+        const clean = h.replace(/[_\-]+/g, ' ').replace(/\s+/g, ' ').trim();
+        for (const [metric, aliases] of Object.entries(METRIC_ALIASES)) {
+            if (map[metric] !== undefined) continue;
+            if (aliases.some(a => clean === a || clean.startsWith(a))) { map[metric] = i; break; }
+        }
+    });
+    return map;
+}
+
+function analyzePerformance() {
+    const input = document.getElementById('analyticsCsv')?.value || '';
+    const host = document.getElementById('analyticsTable');
+    const insightsHost = document.getElementById('analyticsInsights');
+    const summaryHost = document.getElementById('analyticsSummaryLine');
+    if (!host) return;
+
+    if (!input.trim()) { showToast('Paste a platform export first.', 'info'); return; }
+
+    const { header, rows } = parseDelimited(input);
+    if (header.length < 2) { showToast('That does not look like a CSV with a header row.', 'error'); return; }
+
+    const idx = mapHeader(header);
+    if (idx.impressions === undefined && idx.clicks === undefined && idx.spend === undefined) {
+        host.innerHTML = `<p class="helper-text">Could not find an impressions, clicks or spend column. Detected headers: ${escHtml(header.join(', '))}</p>`;
+        return;
+    }
+
+    // Group by platform (fall back to a single blended bucket).
+    const groups = new Map();
+    rows.forEach(r => {
+        const key = idx.platform !== undefined && r[idx.platform] ? r[idx.platform] : 'all channels';
+        if (!groups.has(key)) groups.set(key, {});
+        const g = groups.get(key);
+        ['impressions', 'reach', 'likes', 'comments', 'shares', 'saves', 'clicks', 'conversions', 'spend', 'revenue', 'video_views'].forEach(m => {
+            if (idx[m] === undefined) return;
+            const v = numberOrNull(r[idx[m]]);
+            if (v === null) return;
+            g[m] = (g[m] || 0) + v;
+        });
     });
 
-    setTimeout(() => {
-        showToast(`Publish pipeline executed for ${platforms.length} platform(s).`, 'success');
-    }, platforms.length * 500 + 300);
+    const computed = [...groups.entries()].map(([name, g]) => {
+        const engagement = (g.likes || 0) + (g.comments || 0) + (g.shares || 0) + (g.saves || 0);
+        const impressions = g.impressions ?? null;
+        const reach = g.reach ?? null;
+        // Instagram/Meta define ER against reach when available, otherwise impressions.
+        const erBasis = reach || impressions;
+        return {
+            platform: name,
+            impressions, reach,
+            engagement: (g.likes || g.comments || g.shares || g.saves) ? engagement : null,
+            engagementRate: erBasis ? (engagement / erBasis) * 100 : null,
+            clicks: g.clicks ?? null,
+            ctr: impressions ? ((g.clicks || 0) / impressions) * 100 : null,
+            spend: g.spend ?? null,
+            cpc: g.spend && g.clicks ? g.spend / g.clicks : null,
+            cpm: g.spend && impressions ? (g.spend / impressions) * 1000 : null,
+            conversions: g.conversions ?? null,
+            cpa: g.spend && g.conversions ? g.spend / g.conversions : null,
+            revenue: g.revenue ?? null,
+            roas: g.spend && g.revenue ? g.revenue / g.spend : null,
+        };
+    }).sort((a, b) => (b.impressions || 0) - (a.impressions || 0));
+
+    const fmt = (v, unit = '', digits = 2) => (v === null || v === undefined || !Number.isFinite(v))
+        ? '<span class="metric-na">n/a</span>'
+        : unit === '$' ? `$${v.toFixed(digits)}` : unit === '%' ? `${v.toFixed(digits)}%` : v.toLocaleString();
+
+    host.innerHTML = `
+        <table class="metrics-table">
+            <thead><tr>
+                <th>Channel</th><th>Impressions</th><th>Reach</th><th>Engagement</th><th>ER</th>
+                <th>Clicks</th><th>CTR</th><th>Spend</th><th>CPC</th><th>CPM</th>
+                <th>Conv.</th><th>CPA</th><th>ROAS</th>
+            </tr></thead>
+            <tbody>
+                ${computed.map(c => `<tr>
+                    <td><strong>${escHtml(c.platform)}</strong></td>
+                    <td>${fmt(c.impressions)}</td>
+                    <td>${fmt(c.reach)}</td>
+                    <td>${fmt(c.engagement)}</td>
+                    <td>${fmt(c.engagementRate, '%')}</td>
+                    <td>${fmt(c.clicks)}</td>
+                    <td>${fmt(c.ctr, '%')}</td>
+                    <td>${fmt(c.spend, '$')}</td>
+                    <td>${fmt(c.cpc, '$')}</td>
+                    <td>${fmt(c.cpm, '$')}</td>
+                    <td>${fmt(c.conversions)}</td>
+                    <td>${fmt(c.cpa, '$')}</td>
+                    <td>${fmt(c.roas)}</td>
+                </tr>`).join('')}
+            </tbody>
+        </table>`;
+
+    // Persist the parsed result so the Analytics page KPIs use real data.
+    try {
+        localStorage.setItem('nexus_performance', JSON.stringify({ updatedAt: new Date().toISOString(), rows: computed }));
+    } catch { /* storage full — the table is still on screen */ }
+
+    if (summaryHost) {
+        const totalImpr = computed.reduce((a, c) => a + (c.impressions || 0), 0);
+        const totalSpend = computed.reduce((a, c) => a + (c.spend || 0), 0);
+        const totalRev = computed.reduce((a, c) => a + (c.revenue || 0), 0);
+        summaryHost.textContent = `${computed.length} channel(s) · ${totalImpr.toLocaleString()} impressions · $${totalSpend.toFixed(2)} spend` +
+            (totalRev ? ` · $${totalRev.toFixed(2)} revenue · blended ROAS ${(totalRev / totalSpend).toFixed(2)}×` : '');
+    }
+
+    if (insightsHost) insightsHost.innerHTML = buildPerformanceInsights(computed).map(i => `<li>${escHtml(i)}</li>`).join('');
+    AgentLog.success('analytics', `Performance data analysed: ${rows.length} rows, ${computed.length} channel(s)`);
+    showToast(`Analysed ${rows.length} rows`, 'success');
+}
+
+/** Deterministic, defensible observations — no invented benchmarks. */
+function buildPerformanceInsights(computed) {
+    const out = [];
+    const withEr = computed.filter(c => c.engagementRate !== null);
+    const withCtr = computed.filter(c => c.ctr !== null);
+
+    if (withEr.length > 1) {
+        const best = withEr.slice().sort((a, b) => b.engagementRate - a.engagementRate)[0];
+        const worst = withEr.slice().sort((a, b) => a.engagementRate - b.engagementRate)[0];
+        out.push(`Highest engagement rate: ${best.platform} at ${best.engagementRate.toFixed(2)}%. Lowest: ${worst.platform} at ${worst.engagementRate.toFixed(2)}% — shift production effort toward ${best.platform} before adding new channels.`);
+    }
+    if (withCtr.length) {
+        const best = withCtr.slice().sort((a, b) => b.ctr - a.ctr)[0];
+        out.push(`Best click-through rate: ${best.platform} at ${best.ctr.toFixed(2)}%. That is where your CTA copy and offer are landing.`);
+    }
+    const paid = computed.filter(c => c.spend && c.roas !== null);
+    if (paid.length) {
+        const best = paid.slice().sort((a, b) => b.roas - a.roas)[0];
+        const bad = paid.filter(c => c.roas < 1);
+        out.push(`Best return on ad spend: ${best.platform} at ${best.roas.toFixed(2)}×.`);
+        if (bad.length) out.push(`${bad.map(c => c.platform).join(', ')} returned less than 1× spend — pause or rework the creative and audience before adding budget.`);
+    }
+    const expensive = computed.filter(c => c.cpm !== null).sort((a, b) => b.cpm - a.cpm)[0];
+    if (expensive) out.push(`Highest CPM: ${expensive.platform} at $${expensive.cpm.toFixed(2)} per 1,000 impressions — creative fatigue or a narrow audience is the usual cause.`);
+    if (!out.length) out.push('Not enough overlapping metrics to compare channels. Include at least impressions plus one of engagement, clicks or spend.');
+    out.push('Next step: tag every outbound link with the UTM Builder so the next export attributes revenue to the exact post.');
+    return out;
+}
+
+function loadSampleAnalytics() {
+    const ta = document.getElementById('analyticsCsv');
+    if (!ta) return;
+    ta.value = [
+        'date,platform,campaign,impressions,reach,likes,comments,shares,saves,clicks,conversions,spend,revenue',
+        '2026-01-05,instagram,launch-week,48200,31500,1420,180,95,240,610,42,120,980',
+        '2026-01-05,linkedin,launch-week,18400,12200,540,96,120,60,320,28,90,1240',
+        '2026-01-06,facebook,launch-week,30100,21000,610,140,70,110,280,35,150,760',
+        '2026-01-06,twitter,launch-week,9600,8100,240,45,38,12,140,9,0,0',
+    ].join('\n');
+    analyzePerformance();
+}
+
+function clearAnalytics() {
+    const ta = document.getElementById('analyticsCsv');
+    if (ta) ta.value = '';
+    try { localStorage.removeItem('nexus_performance'); } catch {}
+    const host = document.getElementById('analyticsTable');
+    if (host) host.innerHTML = '<p class="helper-text">No performance data loaded yet.</p>';
+    const ins = document.getElementById('analyticsInsights');
+    if (ins) ins.innerHTML = '';
+    const sum = document.getElementById('analyticsSummaryLine');
+    if (sum) sum.textContent = '';
+    initAnalytics();
+}
+
+function downloadAnalyticsTemplate() {
+    const csv = 'date,platform,campaign,impressions,reach,likes,comments,shares,saves,clicks,conversions,spend,revenue\n' +
+        '2026-01-01,instagram,my-campaign,0,0,0,0,0,0,0,0,0,0\n';
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'nexus-analytics-template.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+function handleAnalyticsFile(input) {
+    const file = input?.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+        const ta = document.getElementById('analyticsCsv');
+        if (ta) ta.value = String(reader.result || '');
+        analyzePerformance();
+    };
+    reader.onerror = () => showToast('Could not read that file', 'error');
+    reader.readAsText(file);
 }
 
 /* ── API Automation Scripts ──────────────────────────────────── */
@@ -2417,8 +3540,8 @@ function renderScript(key) {
 }
 
 function copyScript() {
-    navigator.clipboard.writeText(API_SCRIPTS[activeScript] || '').then(() => {
-        showToast('Script copied to clipboard!', 'success');
+    copyToClipboard(API_SCRIPTS[activeScript] || '').then(ok => {
+        showToast(ok ? 'Script copied to clipboard!' : 'Copy blocked by the browser', ok ? 'success' : 'error');
     });
 }
 
@@ -2448,27 +3571,133 @@ function openCanvaTemplate(type) {
     showToast(`Opening Canva — ${type.replace(/-/g,' ')} editor...`, 'success');
 }
 
-function openCanvaAuth() {
+/**
+ * Canva Connect OAuth with a REAL PKCE pair.
+ *
+ * BUG FIX: the old code sent a hard-coded code_challenge with no matching
+ * code_verifier stored anywhere, which can never complete an OAuth flow — the
+ * user was told to "paste the access token" with no way to obtain one.
+ * PKCE requires a fresh, high-entropy verifier per attempt, and the verifier
+ * must be kept until the authorization code comes back.
+ */
+function base64UrlEncode(bytes) {
+    let str = '';
+    bytes.forEach(b => { str += String.fromCharCode(b); });
+    return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function openCanvaAuth() {
     const clientId = document.getElementById('canva-client-id')?.value.trim();
-    if (!clientId) {
-        showToast('Enter your Canva Client ID first.', 'info');
+    if (!clientId) { showToast('Enter your Canva Client ID first.', 'info'); return; }
+    if (!window.crypto?.subtle) {
+        showToast('PKCE needs a secure context — serve the UI over http://localhost instead of opening the file directly.', 'error');
         return;
     }
-    
-    // Using a static PKCE challenge/verifier pair for local auth
-    const codeChallenge = 'tpS8e2xTnq9AzktXm8BbYJwWYVrjkXzNH5U0U1M4z20'; 
-    const redirectUri = encodeURIComponent('http://127.0.0.1');
-    const scope = encodeURIComponent('design:content:read design:content:write design:meta:read');
-    
-    const authUrl = `https://www.canva.com/api/oauth/authorize?client_id=${clientId}&response_type=code&redirect_uri=${redirectUri}&scope=${scope}&code_challenge=${codeChallenge}&code_challenge_method=s256&state=nexus_canva`;
-    
-    window.open(authUrl, '_blank', 'noopener,noreferrer');
-    showToast('Canva OAuth page opened in new tab. Paste the access token here once authorized.', 'info');
+
+    const verifierBytes = new Uint8Array(48);
+    crypto.getRandomValues(verifierBytes);
+    const codeVerifier = base64UrlEncode(verifierBytes);
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(codeVerifier));
+    const codeChallenge = base64UrlEncode(new Uint8Array(digest));
+    const state = base64UrlEncode(crypto.getRandomValues(new Uint8Array(16)));
+
+    const redirectUri = (document.getElementById('canva-redirect-uri')?.value.trim())
+        || `${location.origin}${location.pathname}`;
+
+    // The verifier must survive the round-trip to Canva.
+    sessionStorage.setItem('canva_pkce_verifier', codeVerifier);
+    sessionStorage.setItem('canva_oauth_state', state);
+    sessionStorage.setItem('canva_redirect_uri', redirectUri);
+
+    const authUrl = 'https://www.canva.com/api/oauth/authorize?' + new URLSearchParams({
+        client_id: clientId,
+        response_type: 'code',
+        redirect_uri: redirectUri,
+        scope: 'design:content:read design:content:write design:meta:read',
+        code_challenge: codeChallenge,
+        code_challenge_method: 'S256',
+        state,
+    });
+
+    AgentLog.info('canva.oauth', 'Canva authorization started (PKCE verifier stored for this tab)');
+    window.open(authUrl.toString(), '_blank', 'noopener,noreferrer');
+    showToast('Authorize in the new tab — Nexus will catch the callback automatically.', 'info');
+}
+
+/**
+ * Handle the ?code=...&state=... redirect from Canva, exchange it for tokens,
+ * and store them. Called on page load.
+ */
+async function handleCanvaCallback() {
+    const params = new URLSearchParams(location.search);
+    const code = params.get('code');
+    if (!code && !params.get('error')) return false;
+
+    const expectedState = sessionStorage.getItem('canva_oauth_state');
+    const verifier = sessionStorage.getItem('canva_pkce_verifier');
+    const redirectUri = sessionStorage.getItem('canva_redirect_uri') || `${location.origin}${location.pathname}`;
+
+    if (params.get('error')) {
+        AgentLog.error('canva.oauth', `Canva denied the request: ${params.get('error')}`);
+        showToast(`Canva authorization failed: ${params.get('error')}`, 'error');
+        return true;
+    }
+    if (expectedState && params.get('state') !== expectedState) {
+        AgentLog.error('canva.oauth', 'State mismatch — possible CSRF, token exchange aborted');
+        showToast('Canva callback rejected: state mismatch.', 'error');
+        return true;
+    }
+    if (!verifier) {
+        showToast('Canva callback received but the PKCE verifier is missing (different tab/session). Start again.', 'error');
+        return true;
+    }
+
+    const clientId = document.getElementById('canva-client-id')?.value.trim()
+        || safeJson('nexus_credentials', {})['canva-client-id'] || '';
+    const clientSecret = safeJson('nexus_credentials', {})['canva-client-secret'] || '';
+
+    try {
+        const body = new URLSearchParams({
+            grant_type: 'authorization_code',
+            code,
+            code_verifier: verifier,
+            redirect_uri: redirectUri,
+        });
+        const headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
+        if (clientSecret) {
+            headers.Authorization = `Basic ${btoa(`${clientId}:${clientSecret}`)}`;
+        } else {
+            body.set('client_id', clientId);
+        }
+        const res = await fetchWithTimeout('https://api.canva.com/rest/v1/oauth/token', {
+            method: 'POST', headers, body: body.toString(),
+        }, 20000);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error_description || data.error || `HTTP ${res.status}`);
+
+        const creds = safeJson('nexus_credentials', {});
+        creds['canva-access-token'] = data.access_token || '';
+        if (data.refresh_token) creds['canva-refresh-token'] = data.refresh_token;
+        creds['canva-token-expires'] = String(Date.now() + (data.expires_in || 3600) * 1000);
+        localStorage.setItem('nexus_credentials', JSON.stringify(creds));
+        checkSavedStatus('canva');
+        AgentLog.success('canva.oauth', 'Canva tokens stored (valid for ' + Math.round((data.expires_in || 3600) / 60) + ' min)');
+        showToast('Canva connected ✔', 'success');
+        history.replaceState({}, '', location.pathname);
+    } catch (e) {
+        AgentLog.error('canva.oauth', `Token exchange failed: ${e.message}`,
+            'If the browser blocked the cross-origin token call, run the exchange server-side with the same client_id and code_verifier.');
+        showToast(`Canva token exchange failed: ${e.message}`, 'error');
+    } finally {
+        sessionStorage.removeItem('canva_pkce_verifier');
+        sessionStorage.removeItem('canva_oauth_state');
+    }
+    return true;
 }
 
 function saveCanvaCredentials() {
-    const saved = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
-    ['canva-client-id', 'canva-client-secret', 'canva-access-token'].forEach(id => {
+    const saved = safeJson('nexus_credentials', {});
+    ['canva-client-id', 'canva-client-secret', 'canva-access-token', 'canva-redirect-uri'].forEach(id => {
         const el = document.getElementById(id);
         if (el && el.value.trim()) saved[id] = el.value.trim();
     });
@@ -2477,52 +3706,83 @@ function saveCanvaCredentials() {
     showToast('Canva credentials saved!', 'success');
 }
 
-function genCanvaCaption() {
-    const link = document.getElementById('canvaDesignLink')?.value;
+/** Generate a real, brand-aware caption through the configured AI engine. */
+async function genCanvaCaption() {
+    const link = document.getElementById('canvaDesignLink')?.value?.trim();
+    const topic = document.getElementById('canvaBriefTopic')?.value?.trim() || '';
+    const platform = document.getElementById('canvaBriefPlatform')?.value || 'Instagram Post';
     const captionEl = document.getElementById('canvaPostCaption');
-    if (!link) { showToast('Paste your Canva design link first.', 'info'); return; }
+    if (!link && !topic) { showToast('Paste your Canva design link or describe the design first.', 'info'); return; }
+    if (!captionEl) return;
 
-    captionEl.value = 'Generating AI caption...';
-    setTimeout(() => {
-        const captions = [
-            `🎨 Fresh design, fresh ideas. Our latest creation is live — what do you think? Drop a comment below! 👇\n\n#design #content #creative #brand #marketing`,
-            `✨ We put a lot of love into this one. Excited to share our newest design with the community!\n\nSave this for inspiration 📌\n\n#creative #contentcreator #designer #digitalmarketing`,
-            `🚀 New visual, same mission: to inspire and connect. Click the link in bio to learn more!\n\n#launch #brand #socialmedia #contentcreation`,
-        ];
-        captionEl.value = captions[Math.floor(Math.random() * captions.length)];
-        showToast('Caption generated!', 'success');
-    }, 800);
+    captionEl.value = 'Generating caption…';
+    try {
+        const results = await window.NexusAI.generate({
+            instruction: `Write social captions for this design. Design link: ${link || 'n/a'}. Design subject: ${topic || link}.`,
+            platforms: ['instagram'],
+            tone: State.settings.tone || 'professional',
+            brand: State.settings.brand,
+            contentType: 'caption',
+            context: `The visual is a ${platform}. Output ONLY the caption text (hook, body, CTA, hashtags) — no headings or commentary.`,
+            onLog: (level, source, message, detail) => (AgentLog[level] || AgentLog.info).call(AgentLog, source, message, detail),
+        });
+        const raw = results.instagram || Object.values(results)[0] || '';
+        captionEl.value = stripMarkdown(raw);
+        showToast('Caption generated — edit before publishing', 'success');
+    } catch (e) {
+        captionEl.value = '';
+        showToast(`Caption failed: ${e.message}`, 'error');
+        AgentLog.error('canva.caption', 'Caption generation failed', e.message);
+    }
 }
 
-function publishCanvaDesign() {
-    const link = document.getElementById('canvaDesignLink')?.value;
-    const caption = document.getElementById('canvaPostCaption')?.value;
+/**
+ * Hand the design off to the real publisher.
+ *
+ * HONESTY FIX: the old implementation waited ~1s and then printed
+ * "Design link shared + caption published ✓" for every platform that merely had
+ * a token stored — nothing was ever sent anywhere. Faking a successful publish
+ * in a marketing tool is how people ship nothing while believing they shipped.
+ * The job now goes to agent/publish.py through the relay, and the UI reports the
+ * true per-platform result.
+ */
+async function publishCanvaDesign() {
+    const link = document.getElementById('canvaDesignLink')?.value?.trim();
+    const caption = document.getElementById('canvaPostCaption')?.value?.trim();
     const log = document.getElementById('canvaPublishLog');
+    if (!log) return;
 
     if (!link) { showToast('Paste your Canva design link first.', 'info'); return; }
     if (!caption) { showToast('Add a caption for the post.', 'info'); return; }
 
-    log.innerHTML = `<div class="log-entry log-info"><i class="ph ph-spinner" style="animation:spin .7s linear infinite"></i> Preparing design for publishing...</div>`;
+    // The Graph APIs accept a link post on Facebook/LinkedIn; Instagram needs a
+    // direct public image URL, so it is deliberately excluded from this hand-off.
+    const platforms = ['facebook', 'linkedin'];
+    log.innerHTML = `<div class="log-entry log-info"><i class="ph ph-paper-plane-tilt"></i> Sending the design link + caption to the local publisher…</div>
+        <div class="log-entry log-pending"><i class="ph ph-info"></i> Instagram needs a direct public image URL (export from Canva and host it), so it is not part of this hand-off.</div>`;
 
-    const saved = JSON.parse(localStorage.getItem('nexus_credentials') || '{}');
-
-    setTimeout(() => {
-        const platforms = ['instagram', 'facebook', 'linkedin'];
-        platforms.forEach((platform, i) => {
-            setTimeout(() => {
-                const tokenField = { instagram: 'ig-access-token', facebook: 'fb-page-token', linkedin: 'li-access-token' }[platform];
-                const hasToken = saved[tokenField];
-                const icon = { instagram: 'ph-fill ph-instagram-logo', facebook: 'ph-fill ph-facebook-logo', linkedin: 'ph-fill ph-linkedin-logo' }[platform];
-
-                if (hasToken) {
-                    log.innerHTML += `<div class="log-entry log-success"><i class="${icon}"></i> ${platform.charAt(0).toUpperCase() + platform.slice(1)}: Design link shared + caption published ✓</div>`;
-                } else {
-                    log.innerHTML += `<div class="log-entry log-error"><i class="${icon}"></i> ${platform.charAt(0).toUpperCase() + platform.slice(1)}: No credentials. Go to Connected Accounts to set up.</div>`;
-                }
-            }, i * 600);
+    try {
+        const data = await queuePublishJob({
+            id: `job-canva-${Date.now()}`,
+            content: `${caption}\n\n${link}`,
+            platforms,
+            media: link,
+            schedule: null,
+            status: 'queued',
+            created_at: new Date().toISOString(),
+            credentials: publishCredSlice(safeJson('nexus_credentials', {})),
         });
-        setTimeout(() => showToast('Canva design publish sequence complete!', 'success'), platforms.length * 600 + 200);
-    }, 1000);
+        (data?.results || []).forEach(r => {
+            log.innerHTML += `<div class="log-entry ${r.ok ? 'log-success' : 'log-error'}"><i class="ph ph-paper-plane-tilt"></i> <strong>${escHtml(String(r.platform))}:</strong> ${escHtml(r.ok ? `Posted${r.id ? ' id=' + r.id : ''}` : String(r.error || 'failed'))}</div>`;
+        });
+        AgentLog.success('canva.publish', `Design hand-off → ${data?.status || 'done'}`);
+        showToast(data?.status === 'published' ? 'Design published ✔' : 'Hand-off finished — check the log above', data?.status === 'published' ? 'success' : 'info');
+    } catch (e) {
+        log.innerHTML += `<div class="log-entry log-error"><i class="ph ph-warning"></i> Not published: ${escHtml(e.message)}. Start the relay (<code>python3 agent/nexus_relay.py</code>) and retry.</div>`;
+        AgentLog.error('canva.publish', 'Design hand-off failed', e.message);
+        showToast('Nothing was published — see the log above', 'error');
+    }
+    refreshQueueView();
 }
 
 function generateVisualBrief() {
@@ -2601,6 +3861,7 @@ ${palettes}
 Object.assign(PAGE_TITLES, {
     accounts: 'Connected Accounts',
     canva:    'Canva Studio',
+    utm:      'UTM Campaign Link Builder',
     logs:     'Agent Error & Activity Logs',
     tutorial: 'Tutorial — How to Use Nexus',
 });
@@ -2685,3 +3946,307 @@ function tutNav(dir) {
 }
 
 function jumpTo(page) { switchPage(page); }
+
+/* ══════════════════════════════════════════════════════════════
+   APPROVAL WORKFLOW
+   Publishing to a live brand account should never be a single
+   unchecked click. Post status moves strictly forward:
+
+       draft → in_review → approved → scheduled → published
+
+   Every transition is written to the Agent Log with a timestamp, so
+   there is an auditable answer to "who approved this?".
+═════════════════════════════════════════════════════════════ */
+const POST_STATUS_FLOW = ['draft', 'in_review', 'approved', 'scheduled', 'published'];
+
+const STATUS_BADGE = {
+    draft: { cls: 'st-draft', label: 'Draft' },
+    in_review: { cls: 'st-planning', label: 'In review' },
+    approved: { cls: 'st-approved', label: 'Approved' },
+    scheduled: { cls: 'st-scheduled', label: 'Scheduled' },
+    published: { cls: 'st-published', label: 'Published' },
+    planning: { cls: 'st-planning', label: 'Planning' },
+};
+
+function nextStatus(current) {
+    const i = POST_STATUS_FLOW.indexOf(current || 'draft');
+    return i === -1 || i === POST_STATUS_FLOW.length - 1 ? null : POST_STATUS_FLOW[i + 1];
+}
+
+function advancePostStatus(eventId) {
+    const ev = State.calendarEvents.find(e => e.id === eventId);
+    if (!ev) return;
+    const next = nextStatus(ev.status || 'draft');
+    if (!next) { showToast('Already published — nothing further to approve.', 'info'); return; }
+    ev.status = next;
+    ev.updatedAt = new Date().toISOString();
+    ev.history = [...(ev.history || []), { status: next, at: ev.updatedAt }];
+    persistCalendarEvents();
+    AgentLog.info('workflow', `"${ev.title}" → ${STATUS_BADGE[next].label}`, { id: ev.id, platform: ev.platform });
+    showToast(`Status: ${STATUS_BADGE[next].label}`, 'success');
+    renderCalendar();
+    renderPostDetail(ev.id);
+}
+
+function revertPostStatus(eventId) {
+    const ev = State.calendarEvents.find(e => e.id === eventId);
+    if (!ev) return;
+    const i = POST_STATUS_FLOW.indexOf(ev.status || 'draft');
+    if (i <= 0) { showToast('Already at the first stage.', 'info'); return; }
+    ev.status = POST_STATUS_FLOW[i - 1];
+    ev.updatedAt = new Date().toISOString();
+    ev.history = [...(ev.history || []), { status: ev.status, at: ev.updatedAt }];
+    persistCalendarEvents();
+    AgentLog.warn('workflow', `"${ev.title}" reverted to ${STATUS_BADGE[ev.status].label}`, { id: ev.id });
+    renderCalendar();
+    renderPostDetail(ev.id);
+}
+
+function deletePost(eventId) {
+    const ev = State.calendarEvents.find(e => e.id === eventId);
+    if (!ev) return;
+    if (!confirm(`Delete "${ev.title}"? This cannot be undone.`)) return;
+    State.calendarEvents = State.calendarEvents.filter(e => e.id !== eventId);
+    persistCalendarEvents();
+    AgentLog.warn('workflow', `Deleted calendar post "${ev.title}"`, { id: eventId });
+    showToast('Post deleted', 'success');
+    closePostDetail();
+    renderCalendar();
+}
+
+function persistCalendarEvents() {
+    try {
+        localStorage.setItem('nexus_calendar_events', JSON.stringify(State.calendarEvents));
+    } catch {
+        showToast('Could not save — browser storage is full', 'error');
+    }
+}
+
+/** Detail drawer for a calendar post, with the approval controls. */
+function renderPostDetail(eventId) {
+    const host = document.getElementById('postDetail');
+    if (!host) return;
+    const ev = State.calendarEvents.find(e => e.id === eventId);
+    if (!ev) { host.classList.add('hidden'); return; }
+
+    const status = ev.status || 'draft';
+    const badge = STATUS_BADGE[status] || STATUS_BADGE.draft;
+    const next = nextStatus(status);
+    host.classList.remove('hidden');
+    host.innerHTML = `
+        <div class="card-header">
+            <h3>${escHtml(ev.title)}</h3>
+            <button class="icon-btn" onclick="closePostDetail()" aria-label="Close"><i class="ph ph-x"></i></button>
+        </div>
+        <div class="detail-row"><span class="status-badge ${badge.cls}">${escHtml(badge.label)}</span>
+            <span class="chip">${escHtml(ev.platform || 'unassigned')}</span>
+            <span class="chip">${escHtml([ev.date, ev.time].filter(Boolean).join(' '))}</span></div>
+        ${ev.body ? `<div class="content-block detail-body">${renderContent(ev.body)}</div>` : '<p class="helper-text">No body copy attached yet. Generate content and use "To calendar" to attach it.</p>'}
+        ${(ev.history || []).length ? `<div class="detail-history"><strong>History</strong><ul>${ev.history.map(h => `<li>${escHtml(new Date(h.at).toLocaleString())} → ${escHtml((STATUS_BADGE[h.status] || {}).label || h.status)}</li>`).join('')}</ul></div>` : ''}
+        <div class="detail-actions">
+            ${next ? `<button class="btn btn-primary btn-sm" onclick="advancePostStatus('${escHtml(ev.id)}')"><i class="ph ph-arrow-right"></i> Move to ${escHtml(STATUS_BADGE[next].label)}</button>` : ''}
+            <button class="btn btn-ghost btn-sm" onclick="revertPostStatus('${escHtml(ev.id)}')"><i class="ph ph-arrow-left"></i> Revert</button>
+            <button class="btn btn-ghost btn-sm" onclick="postToPublisher('${escHtml(ev.id)}')"><i class="ph ph-paper-plane-tilt"></i> Send to publisher</button>
+            <button class="btn btn-ghost btn-sm btn-danger" onclick="deletePost('${escHtml(ev.id)}')"><i class="ph ph-trash"></i> Delete</button>
+        </div>`;
+}
+
+function closePostDetail() {
+    document.getElementById('postDetail')?.classList.add('hidden');
+}
+
+function postToPublisher(eventId) {
+    const ev = State.calendarEvents.find(e => e.id === eventId);
+    if (!ev) return;
+    if ((ev.status || 'draft') !== 'approved' && (ev.status || 'draft') !== 'scheduled') {
+        showToast('Approve the post before sending it to the publisher.', 'info');
+        AgentLog.warn('workflow', `Blocked publish of "${ev.title}" — status is ${ev.status || 'draft'}`);
+        return;
+    }
+    switchPage('accounts');
+    const ta = document.getElementById('autoPostContent');
+    if (ta) ta.value = stripMarkdown(ev.body || ev.title).slice(0, 4000);
+    const cb = document.querySelector(`input[name="autoPlat"][value="${canonicalPlatform(ev.platform)}"]`);
+    if (cb) cb.checked = true;
+    previewAutoPost();
+}
+
+/* ══════════════════════════════════════════════════════════════
+   COMMAND PALETTE  (⌘K / Ctrl+K)
+   Production polish: every action reachable from the keyboard.
+═════════════════════════════════════════════════════════════ */
+const PALETTE_ACTIONS = [
+    { label: 'Go to Dashboard', hint: 'page', run: () => switchPage('dashboard') },
+    { label: 'Go to AI Agent', hint: 'page', run: () => switchPage('agent') },
+    { label: 'Go to Content Studio', hint: 'page', run: () => switchPage('create') },
+    { label: 'Go to Content Calendar', hint: 'page', run: () => switchPage('calendar') },
+    { label: 'Go to Analytics', hint: 'page', run: () => switchPage('analytics') },
+    { label: 'Go to Trend Radar', hint: 'page', run: () => switchPage('trends') },
+    { label: 'Go to UTM Builder', hint: 'page', run: () => switchPage('utm') },
+    { label: 'Go to Connected Accounts', hint: 'page', run: () => switchPage('accounts') },
+    { label: 'Go to Browser Agent', hint: 'page', run: () => switchPage('browser') },
+    { label: 'Go to Agent Logs', hint: 'page', run: () => switchPage('logs') },
+    { label: 'Go to Settings', hint: 'page', run: () => switchPage('settings') },
+    { label: 'Dispatch a new task', hint: 'action', run: () => { switchPage('agent'); document.getElementById('agentInstruction')?.focus(); } },
+    { label: 'Cancel running generation', hint: 'action', run: () => cancelDispatch() },
+    { label: 'Copy the active output', hint: 'action', run: () => copyOutput() },
+    { label: 'Repurpose the active output', hint: 'action', run: () => repurposeActiveOutput() },
+    { label: 'Add the active output to the calendar', hint: 'action', run: () => addOutputToCalendar() },
+    { label: 'Send the active output to the publisher', hint: 'action', run: () => sendOutputToPublisher() },
+    { label: 'Validate the publish payload (dry run)', hint: 'action', run: () => validatePublish() },
+    { label: 'Process scheduled posts that are due', hint: 'action', run: () => publishDueJobs() },
+    { label: 'Refresh the local queue', hint: 'action', run: () => refreshQueueView() },
+    { label: 'Check relay health', hint: 'action', run: () => checkRelayHealth().then(d => showToast(d ? 'Relay reachable' : 'Relay offline', d ? 'success' : 'error')) },
+    { label: 'Test all social connections', hint: 'action', run: () => testAllConnections() },
+    { label: 'Import performance data', hint: 'action', run: () => { switchPage('analytics'); document.getElementById('analyticsCsv')?.focus(); } },
+    { label: 'Export the agent log (JSON)', hint: 'action', run: () => AgentLog.exportJson() },
+    { label: 'Show the tutorial', hint: 'help', run: () => switchPage('tutorial') },
+];
+
+let paletteIndex = 0;
+let paletteResults = [];
+
+function initCommandPalette() {
+    const overlay = document.getElementById('paletteOverlay');
+    const input = document.getElementById('paletteInput');
+    if (!overlay || !input) return;
+
+    document.addEventListener('keydown', (e) => {
+        const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName) || e.target?.isContentEditable;
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+            e.preventDefault();
+            openPalette();
+            return;
+        }
+        if (!overlay.classList.contains('hidden')) {
+            if (e.key === 'Escape') { closePalette(); }
+            else if (e.key === 'ArrowDown') { e.preventDefault(); paletteMove(1); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); paletteMove(-1); }
+            else if (e.key === 'Enter') { e.preventDefault(); paletteResults[paletteIndex]?.run(); closePalette(); }
+        } else if (e.key === '/' && !typing) {
+            e.preventDefault();
+            openPalette();
+        }
+    });
+
+    input.addEventListener('input', () => renderPaletteResults(input.value));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closePalette(); });
+}
+
+function openPalette() {
+    const overlay = document.getElementById('paletteOverlay');
+    const input = document.getElementById('paletteInput');
+    if (!overlay || !input) return;
+    overlay.classList.remove('hidden');
+    input.value = '';
+    renderPaletteResults('');
+    input.focus();
+}
+
+function closePalette() {
+    document.getElementById('paletteOverlay')?.classList.add('hidden');
+}
+
+function renderPaletteResults(query) {
+    const list = document.getElementById('paletteResults');
+    if (!list) return;
+    const q = String(query || '').toLowerCase().trim();
+    paletteResults = PALETTE_ACTIONS.filter(a =>
+        !q || a.label.toLowerCase().includes(q) || a.hint.includes(q));
+    paletteIndex = 0;
+    if (!paletteResults.length) {
+        list.innerHTML = '<div class="palette-item disabled">No matching action</div>';
+        return;
+    }
+    list.innerHTML = paletteResults.map((a, i) =>
+        `<div class="palette-item ${i === 0 ? 'active' : ''}" data-i="${i}">
+            <span>${escHtml(a.label)}</span><span class="palette-hint">${escHtml(a.hint)}</span>
+        </div>`).join('');
+    list.querySelectorAll('.palette-item').forEach(el =>
+        el.addEventListener('click', () => {
+            paletteResults[Number(el.dataset.i)]?.run();
+            closePalette();
+        }));
+}
+
+function paletteMove(delta) {
+    if (!paletteResults.length) return;
+    paletteIndex = (paletteIndex + delta + paletteResults.length) % paletteResults.length;
+    document.querySelectorAll('#paletteResults .palette-item').forEach((el, i) =>
+        el.classList.toggle('active', i === paletteIndex));
+    document.querySelector('#paletteResults .palette-item.active')?.scrollIntoView({ block: 'nearest' });
+}
+
+/* ══════════════════════════════════════════════════════════════
+   WORKSPACE BACKUP / RESTORE
+   Everything the app learns about your brand lives in localStorage.
+   Losing it to a cleared cache is a real risk, so export/import is
+   a first-class feature. Credentials are excluded by default.
+═════════════════════════════════════════════════════════════ */
+const BACKUP_KEYS = [
+    'nexus_settings', 'nexus_ai_config', 'nexus_calendar_events',
+    'nexus_content_history', 'nexus_agent_log', 'nexus_drafts',
+    'nexus_publish_queue', 'nexus_performance',
+];
+
+function exportWorkspace({ includeSecrets = false } = {}) {
+    const payload = {
+        app: 'nexus-marketing-command-center',
+        version: 3,
+        exportedAt: new Date().toISOString(),
+        data: {},
+    };
+    BACKUP_KEYS.forEach(k => {
+        const raw = localStorage.getItem(k);
+        if (raw !== null) {
+            try { payload.data[k] = JSON.parse(raw); } catch { payload.data[k] = raw; }
+        }
+    });
+    if (includeSecrets) {
+        payload.data['nexus_credentials'] = safeJson('nexus_credentials', {});
+        payload.warning = 'This file contains API keys and access tokens in plain text. Store it accordingly.';
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `nexus-workspace-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    AgentLog.info('workspace', `Workspace exported${includeSecrets ? ' (including credentials)' : ''}`);
+    showToast(includeSecrets ? 'Exported with credentials — keep the file safe' : 'Workspace exported', 'success');
+}
+
+function importWorkspace(input) {
+    const file = input?.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+        try {
+            const payload = JSON.parse(String(reader.result || '{}'));
+            if (payload.app !== 'nexus-marketing-command-center' || !payload.data) {
+                throw new Error('This is not a Nexus workspace file.');
+            }
+            if (!confirm(`Importing will overwrite your current workspace with the backup from ${payload.exportedAt || 'unknown date'}. Continue?`)) return;
+            Object.entries(payload.data).forEach(([k, v]) => {
+                localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v));
+            });
+            AgentLog.success('workspace', `Workspace imported from ${file.name}`, { keys: Object.keys(payload.data) });
+            showToast('Workspace imported — reloading…', 'success');
+            setTimeout(() => location.reload(), 700);
+        } catch (e) {
+            AgentLog.error('workspace', `Import failed: ${e.message}`);
+            showToast(`Import failed: ${e.message}`, 'error');
+        } finally {
+            if (input) input.value = '';
+        }
+    };
+    reader.onerror = () => showToast('Could not read that file', 'error');
+    reader.readAsText(file);
+}
+
+function clearWorkspace() {
+    if (!confirm('Delete ALL Nexus data in this browser (settings, calendar, history, logs)? Credentials are kept. This cannot be undone.')) return;
+    BACKUP_KEYS.forEach(k => { if (k !== 'nexus_credentials') localStorage.removeItem(k); });
+    AgentLog.warn('workspace', 'Workspace cleared by user');
+    setTimeout(() => location.reload(), 500);
+}

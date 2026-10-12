@@ -25,7 +25,7 @@ Registered tools:
   telegram_notify       – push message/report to user's Telegram
   read_agent_logs       – pull error/activity log for debugging
 
-Run standalone (dev):   python3 nexus_mcp.py --self-test
+Run standalone (dev):   python3 agent/nexus_mcp.py --self-test
 Register in a client:   see mcp-config-examples.json in repo root
 """
 
@@ -38,6 +38,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BROWSER_SCRIPT = ROOT / "agent" / "browser_automation.py"
+PUBLISHER = ROOT / "agent" / "publish.py"
 LOGS_DIR = ROOT / "logs"
 
 
@@ -45,34 +46,96 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _extract_json(text: str):
+    """Parse the largest JSON value in mixed output.
+
+    BUG FIX: the previous `out.find("{")` + `json.loads(out[start:])` approach
+    broke on ANY trailing output — and the browser skill printed its `[audit]`
+    line to stdout. The result was `Extra data:` on every browser tool call, so
+    browser_navigate/snapshot/screenshot/act all reported failure even when the
+    underlying command succeeded. (The audit log now goes to stderr as well.)
+    """
+    if not text:
+        return None
+    decoder = json.JSONDecoder()
+    best = None
+    for i, ch in enumerate(text):
+        if ch not in "{[":
+            continue
+        try:
+            obj, end = decoder.raw_decode(text[i:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, (dict, list)) and (best is None or end > best[0]):
+            best = (end, obj)
+    if best:
+        return best[1]
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
 def run_py(script: Path, *args, timeout=60) -> dict:
-    """Run one of Nexus's python skills as a subprocess, capture JSON output."""
+    """Run one of Nexus's python skills as a subprocess, capture its JSON."""
     cmd = [sys.executable, str(script), *[str(a) for a in args]]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=str(ROOT))
-        out = proc.stdout.strip()
-        # The scripts print an [audit] line then JSON; take last {...} block
-        start = out.find("{")
-        parsed = json.loads(out[start:]) if start >= 0 else {"raw": out}
-        return {"ok": proc.returncode == 0, "exit": proc.returncode,
-                "data": parsed, "stderr": proc.stderr.strip()[:400]}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"timed out after {timeout}s", "cmd": " ".join(cmd)}
     except Exception as e:
         return {"ok": False, "error": str(e), "cmd": " ".join(cmd)}
+
+    parsed = _extract_json(proc.stdout)
+    if parsed is None:
+        return {"ok": False, "exit": proc.returncode,
+                "error": (proc.stderr.strip() or proc.stdout.strip() or "no JSON output")[:600],
+                "cmd": " ".join(cmd)}
+    return {"ok": proc.returncode == 0, "exit": proc.returncode,
+            "data": parsed, "stderr": proc.stderr.strip()[:400]}
 
 
 # ────────────────────────────────────────────────────────────────
 # TOOL REGISTRY  (name → handler + JSON schema)
 # ────────────────────────────────────────────────────────────────
 def tool_generate_content(params):
+    """Generate real platform-native copy through the Python skill engine.
+
+    This used to return a placeholder string ("[INSTAGRAM] topic — tone…") that
+    looked like output but contained no marketing value. It now shells out to
+    skill/digital-marketer/scripts/generate_content.py, which resolves the same
+    provider chain from .env / local servers.
+    """
     topic = params.get("topic", "")
     brand = params.get("brand", os.environ.get("NEXUS_BRAND", "My Brand"))
     tone = params.get("tone", "professional")
     platforms = params.get("platforms", ["instagram"])
-    # Local template engine keeps the contract dependency-free; swap in a real
-    # LLM call here if OPENAI_API_KEY / XAI_API_KEY env vars exist.
-    pieces = {p: f"[{p.upper()}] {topic} — {tone} tone, brand: {brand}. #{''.join(w.lower() for w in topic.split()[:3])}"
-              for p in platforms}
-    return {"ok": True, "generated_at": now_iso(), "content": pieces}
+    if not topic:
+        return {"ok": False, "error": "topic is required"}
+    if not isinstance(platforms, list) or not platforms:
+        platforms = ["instagram"]
+
+    generator = ROOT / "skill" / "digital-marketer" / "scripts" / "generate_content.py"
+    if not generator.exists():
+        return {"ok": False, "error": f"content generator not found at {generator}"}
+
+    provider = params.get("provider") or os.environ.get("NEXUS_PROVIDER", "auto")
+    cmd = [sys.executable, str(generator), "--topic", topic, "--brand", brand,
+           "--tone", tone, "--provider", provider, "--json", "--no-save"]
+    for p in platforms:
+        cmd += ["--platforms", str(p)]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180, cwd=str(ROOT))
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "content generation timed out after 180s"}
+
+    payload = _extract_json(proc.stdout)
+    if not isinstance(payload, dict) or not payload.get("content"):
+        return {"ok": False, "error": (proc.stderr.strip() or proc.stdout.strip() or "generation failed")[:600],
+                "content": {p: "" for p in platforms}}
+    return {"ok": True, "generated_at": now_iso(),
+            "provider": payload.get("provider"), "model": payload.get("model"),
+            "content": payload["content"]}
 
 
 def tool_plan_campaign(params):
@@ -136,10 +199,14 @@ def tool_render_video(params):
         return {"ok": False, "error": "No images supplied"}
     listfile = LOGS_DIR / "ffmpeg_concat.txt"
     LOGS_DIR.mkdir(exist_ok=True)
-    with open(listfile, "w") as f:
+    def _esc(p: str) -> str:
+        # ffmpeg's concat demuxer treats ' specially; a raw quote in a filename
+        # silently corrupts the list (or lets a crafted path inject directives).
+        return str(p).replace("'", "'\\''").replace("\n", " ").replace("\r", "")
+    with open(listfile, "w", encoding="utf-8") as f:
         for img in images:
-            f.write(f"file '{img}'\nduration {duration}\n")
-        f.write(f"file '{images[-1]}'\n")
+            f.write(f"file '{_esc(img)}'\nduration {duration}\n")
+        f.write(f"file '{_esc(images[-1])}'\n")
     r = _ffmpeg(["-y", "-f", "concat", "-safe", "0",
         "-i", str(listfile), "-vsync", "v2", "-pix_fmt", "yuv420p", out])
     if r["ok"]:
@@ -179,6 +246,44 @@ def tool_telegram_notify(params):
         return {"ok": False, "error": str(e)}
 
 
+def tool_publish_post(params):
+    """Publish text to one social platform through agent/publish.py."""
+    platform = params.get("platform", "")
+    text = (params.get("text") or "").strip()
+    media = params.get("media", "")
+    if not platform or not text:
+        return {"ok": False, "error": "both platform and text are required"}
+    args = ["--platform", platform, "--text", text]
+    if media:
+        args += ["--media", media]
+    if params.get("dry_run"):
+        args.append("--dry-run")
+    result = run_py(PUBLISHER, *args, timeout=180)
+    data = result.get("data") or {}
+    return {"ok": bool(data.get("results") and all(r.get("ok") for r in data["results"])),
+            "platform": platform, "data": data, "stderr": result.get("stderr", "")}
+
+
+def tool_publish_queue(params):
+    """Read the local publish queue (scheduled + completed jobs)."""
+    limit = int(params.get("limit", 20))
+    queue_file = LOGS_DIR / "publish_queue.json"
+    if not queue_file.exists():
+        return {"ok": True, "count": 0, "jobs": []}
+    try:
+        jobs = json.loads(queue_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        return {"ok": False, "error": f"queue unreadable: {e}"}
+    if not isinstance(jobs, list):
+        return {"ok": False, "error": "queue file is not a list"}
+    counts = {}
+    for j in jobs:
+        counts[j.get("status", "unknown")] = counts.get(j.get("status", "unknown"), 0) + 1
+    # Never leak credentials stored on queue entries back to the caller.
+    safe = [{k: v for k, v in j.items() if k != "credentials"} for j in jobs[-limit:]]
+    return {"ok": True, "count": len(jobs), "counts": counts, "jobs": safe}
+
+
 def tool_read_agent_logs(params):
     limit = int(params.get("limit", 50))
     entries = []
@@ -186,7 +291,6 @@ def tool_read_agent_logs(params):
     if audit_file.exists():
         lines = audit_file.read_text(encoding="utf-8").strip().splitlines()
         entries = [json.loads(l) for l in lines[-limit:] if l.startswith("{")]
-    ui_log = ROOT / "ui"  # browser-side logs live in localStorage; exported via UI
     return {"ok": True, "entries": entries,
             "note": "Browser UI logs: use Agent Logs page → Export JSON to share them."}
 
@@ -228,13 +332,22 @@ TOOLS = {
                                "text": {"type": "string"}, "chat_id": {"type": "string"}}, "required": ["text"]}),
     "read_agent_logs":    (tool_read_agent_logs,    "Read recent agent/browser audit log entries",
                            {"type": "object", "properties": {"limit": {"type": "integer"}}}),
+    "publish_post":       (tool_publish_post,       "Publish text to a social platform via the local publisher",
+                           {"type": "object", "properties": {
+                               "platform": {"type": "string",
+                                            "enum": ["facebook", "instagram", "twitter", "linkedin", "blogger"]},
+                               "text": {"type": "string"}, "media": {"type": "string"},
+                               "dry_run": {"type": "boolean"}},
+                            "required": ["platform", "text"]}),
+    "read_publish_queue": (tool_publish_queue,      "Read the local publish queue (scheduled + completed)",
+                           {"type": "object", "properties": {"limit": {"type": "integer"}}}),
 }
 
 
 # ────────────────────────────────────────────────────────────────
 # MCP JSON-RPC loop (stdio transport)
 # ────────────────────────────────────────────────────────────────
-SERVER_INFO = {"name": "nexus-social-manager", "version": "2.0.0"}
+SERVER_INFO = {"name": "nexus-social-manager", "version": "3.0.0"}
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -248,9 +361,11 @@ def handle(req):
     rid = req.get("id")
 
     if method == "initialize":
+        # Echo the client's protocol version when it is one we can serve.
+        requested = req.get("params", {}).get("protocolVersion") or PROTOCOL_VERSION
         return {"jsonrpc": "2.0", "id": rid, "result": {
-            "protocolVersion": PROTOCOL_VERSION, "serverInfo": SERVER_INFO,
-            "capabilities": {"tools": {}}}}
+            "protocolVersion": requested, "serverInfo": SERVER_INFO,
+            "capabilities": {"tools": {}, "resources": {}}}}
 
     if method in ("notifications/initialized", "initialized"):
         return None  # notification, no response
@@ -290,8 +405,20 @@ def handle(req):
 
     if method == "resources/read":
         uri = req.get("params", {}).get("uri", "").replace("file://", "")
-        path = ROOT / uri
-        text = path.read_text(encoding="utf-8") if path.exists() else "(missing)"
+        # SECURITY: resolve and confine to ROOT — "../../.ssh/id_rsa" must not work.
+        candidate = (ROOT / uri).resolve()
+        try:
+            candidate.relative_to(ROOT.resolve())
+            inside = True
+        except ValueError:
+            inside = False
+        if not inside:
+            return {"jsonrpc": "2.0", "id": rid, "error":
+                    {"code": -32602, "message": "Resource URI escapes the project root"}}
+        try:
+            text = candidate.read_text(encoding="utf-8") if candidate.is_file() else "(missing)"
+        except OSError as e:
+            text = f"(unreadable: {e})"
         return {"jsonrpc": "2.0", "id": rid, "result": {
             "contents": [{"uri": req["params"]["uri"], "mimeType": "text/plain", "text": text}]}}
 
@@ -305,6 +432,7 @@ def self_test():
     listing = handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [t["name"] for t in listing["result"]["tools"]]
     print(f"Tools exposed ({len(names)}): {', '.join(names)}")
+    assert "publish_post" in names and "read_publish_queue" in names
     r = handle({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                 "params": {"name": "generate_content", "arguments": {"topic": "Launch week"}}})
     assert not r["result"]["isError"]

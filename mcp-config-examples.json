@@ -31,7 +31,7 @@
     }
   },
   "lm_studio_hermes": {
-    "_how": "LM Studio → Installed → MCP Servers → Add: command python3, args [ABSOLUTE_PATH/agent/nexus_mcp.py]. Hermes tool-calling will discover the 11 Nexus tools automatically.",
+    "_how": "LM Studio → Installed → MCP Servers → Add: command python3, args [ABSOLUTE_PATH/agent/nexus_mcp.py]. Hermes tool-calling will discover the 13 Nexus tools automatically.",
     "mcpServers": {
       "nexus": { "command": "python3", "args": ["ABSOLUTE_PATH/agent/nexus_mcp.py"] }
     }

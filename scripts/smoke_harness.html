@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>nexus smoke harness</title>
+<style>html,body{margin:0;background:#0a0a0f}iframe{width:1400px;height:1000px;border:0;display:block}#result{position:absolute;left:-99999px;top:0}</style>
+</head><body>
+<iframe id="app" src="./index.html"></iframe>
+<!--
+  A deliberate load gate. Chrome's --dump-dom and --screenshot both fire on the
+  document 'load' event, which would otherwise capture the report while the
+  assertions below are still running. This image only resolves once the harness
+  calls /__done, so 'load' means "report finished".
+-->
+<img id="gate" src="/__gate" alt="" style="display:none">
+<pre id="result">PENDING</pre>
+<script>
+const results = [];
+const check = (name, ok, detail) => results.push({ name, ok: !!ok, detail: detail == null ? '' : String(detail) });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+(async () => {
+  const frame = document.getElementById('app');
+
+  // Do not trust the first load event: it can fire for the iframe's initial
+  // about:blank document. Wait for the app's own markup to exist.
+  const deadline = Date.now() + 25000;
+  while (Date.now() < deadline) {
+    const doc = frame.contentDocument;
+    if (doc && doc.getElementById('page-dashboard')) break;
+    await sleep(150);
+  }
+
+  const w = frame.contentWindow;
+  const d = frame.contentDocument;
+  if (!d || !d.getElementById('page-dashboard')) {
+    throw new Error('the app never rendered — index.html did not boot');
+  }
+  const $ = sel => d.getElementById(String(sel).replace(/^#/, ''));
+  const agentLog = () => { try { return JSON.parse(w.localStorage.getItem('nexus_agent_log') || '[]'); } catch { return []; } };
+
+  await sleep(1800);   // init(), relay probe and canva callback settle
+
+  /* load integrity */
+  const runtimeErrors = agentLog().filter(e => e.source === 'app.runtime' || e.source === 'app.promise');
+  check('no uncaught runtime errors at load', runtimeErrors.length === 0,
+        runtimeErrors.map(e => e.source + ': ' + e.message).join(' | '));
+
+  /* boot state */
+  check('NexusAI engine constructed', typeof w.NexusAI === 'object' && w.NexusAI !== null);
+  check('markdown renderer registered', typeof w.renderMarkdown === 'function');
+  const dash = $('#page-dashboard');
+  check('dashboard is the default page', !!dash && dash.classList.contains('active'),
+        'page-content blocks=' + d.querySelectorAll('.page-content').length);
+  // Top-level const State is a lexical global in the frame's realm, so it is
+  // deliberately NOT a property of its window. Evaluate inside the frame.
+  const inFrame = (expr) => { try { return w.eval(expr); } catch (e) { return undefined; } };
+  check('settings hydrated without throwing', !!inFrame('typeof State === "object" && !!State.settings'));
+
+  /* initChrome() was never called before the fix: sidebar toggle, mobile drawer,
+     backdrop and notification bell had no listeners at all. */
+  const shell = d.querySelector('.app-shell');
+  const before = shell.className;
+  $('#sidebarToggle').click();
+  const toggled = shell.className !== before;
+  $('#sidebarToggle').click();
+  check('chrome controls wired (sidebar toggle works)', toggled);
+  $('#notifBtn').click();
+  check('notification panel opens', $('#notifPanel').classList.contains('open'));
+
+  /* command palette */
+  d.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true }));
+  const paletteOpen = !$('paletteOverlay').classList.contains('hidden');
+  const paletteItems = d.querySelectorAll('#paletteResults .palette-item').length;
+  $('paletteInput').value = 'utm';
+  $('paletteInput').dispatchEvent(new w.Event('input', { bubbles: true }));
+  const filtered = d.querySelectorAll('#paletteResults .palette-item').length;
+  d.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  check('command palette opens on Cmd+K', paletteOpen && paletteItems > 10, 'items=' + paletteItems);
+  check('command palette filters as you type', filtered > 0 && filtered < paletteItems, 'filtered=' + filtered);
+  check('command palette closes on Escape', $('paletteOverlay').classList.contains('hidden'));
+
+  /* every page renders */
+  const pages = [...d.querySelectorAll('.nav-item')].map(n => n.dataset.page);
+  const pageErrors = [];
+  for (const p of pages) { try { w.switchPage(p); } catch (e) { pageErrors.push(p + ': ' + e.message); } }
+  w.switchPage('dashboard');
+  check('all ' + pages.length + ' nav pages switch cleanly', pageErrors.length === 0, pageErrors.join(' | '));
+  check('page count is complete', pages.length >= 18, 'found ' + pages.length);
+
+  /* markdown output panel */
+  w.renderOutputTabs({ instagram: '- a\n- b\n- c' });
+  const listHtml = $('tabContent').innerHTML;
+  check('multi-line list renders as ONE <ul> (was one per item)',
+        (listHtml.match(/<ul>/g) || []).length === 1 && (listHtml.match(/<li>/g) || []).length === 3,
+        'ul=' + (listHtml.match(/<ul>/g) || []).length + ' li=' + (listHtml.match(/<li>/g) || []).length
+        + ' html=' + listHtml.slice(0, 160));
+  w.renderOutputTabs({ instagram: '<img src=x onerror=alert(1)>' });
+  const inj = $('tabContent');
+  check('model output cannot inject HTML',
+        inj.querySelectorAll('img').length === 0 && inj.innerHTML.includes('&lt;img'),
+        'imgs=' + inj.querySelectorAll('img').length);
+  w.renderOutputTabs({ instagram: 'hello world' });
+  check('per-output utility actions render', d.querySelectorAll('.content-actions button').length >= 5);
+  w.renderOutputTabs({});
+  check('empty result set shows a message instead of crashing',
+        $('tabContent').innerHTML.includes('No content was returned'));
+
+  /* UTM builder */
+  w.switchPage('utm');
+  $('utmBase').value = 'https://brand.test/offer?ref=old';
+  $('utmSource').value = 'Instagram';
+  $('utmMedium').value = 'Social Paid';
+  $('utmCampaign').value = 'Spring Launch!';
+  $('utmContent').value = 'reel_a';
+  const built = w.buildUtm();
+  check('builds a normalised GA4 link',
+        typeof built === 'string' && built.includes('utm_source=instagram') &&
+        built.includes('utm_medium=social-paid') && built.includes('utm_campaign=spring-launch'));
+  check('preserves pre-existing query parameters', typeof built === 'string' && built.includes('ref=old'));
+  $('utmSource').value = ''; $('utmMedium').value = '';
+  $('utmPreset').value = 'email'; w.applyUtmPreset();
+  check('channel preset fills source and medium',
+        $('utmSource').value === 'newsletter' && $('utmMedium').value === 'email');
+  $('utmSource').value = ''; w.buildUtm();
+  check('missing required parameters are reported', $('utmOutput').textContent.includes('utm_source'));
+  $('utmBase').value = 'brand.test/offer'; $('utmSource').value = 'ig';
+  $('utmMedium').value = 'social'; $('utmCampaign').value = 'x';
+  check('a URL without a scheme is rejected', typeof w.buildUtm() !== 'string');
+
+  /* performance analytics */
+  w.switchPage('analytics');
+  $('analyticsCsv').value =
+    'date,platform,impressions,reach,likes,comments,shares,saves,clicks,conversions,spend,revenue\n' +
+    '2026-01-05,instagram,10000,8000,400,50,25,25,200,10,100,500\n' +
+    '2026-01-05,facebook,5000,4000,100,10,5,5,50,2,50,100\n';
+  w.analyzePerformance();
+  const tableText = $('analyticsTable').textContent;
+  check('CSV import computes a row per channel', d.querySelectorAll('#analyticsTable tbody tr').length === 2);
+  check('engagement rate computed (500/8000 = 6.25%)', tableText.includes('6.25%'));
+  check('CTR computed (200/10000 = 2.00%)', tableText.includes('2.00%'));
+  check('ROAS computed (500/100 = 5.00)', tableText.includes('5.00'));
+  $('analyticsCsv').value =
+    'date,platform,impressions,clicks,spend\n' +
+    '2026-01-05,instagram,1000,40,25\n';
+  w.analyzePerformance();
+  check('metrics the export omits show n/a rather than a guess',
+        $('analyticsTable').textContent.includes('n/a'));
+  check('insights derived from the numbers', d.querySelectorAll('#analyticsInsights li').length > 0);
+  w.initAnalytics();
+  check('KPIs switch to the imported dataset', $('analyticsKpis').textContent.includes('Impressions'));
+
+  /* approval workflow */
+  inFrame('State.calendarEvents = [{ id: "ev-smoke", title: "Smoke post", date: "2026-01-05", '
+        + 'time: "09:00", platform: "instagram", status: "draft", body: "body text", '
+        + 'history: [{ status: "draft", at: "2026-01-05T09:00:00.000Z" }] }]');
+  w.advancePostStatus('ev-smoke');
+  const afterOne = inFrame('State.calendarEvents[0].status');
+  w.advancePostStatus('ev-smoke');
+  const afterTwo = inFrame('State.calendarEvents[0].status');
+  check('status advances draft -> in_review -> approved', afterOne === 'in_review' && afterTwo === 'approved',
+        afterOne + ' -> ' + afterTwo);
+  check('every transition is recorded in history', inFrame('State.calendarEvents[0].history.length') >= 3);
+  check('the flow stops at published', w.nextStatus('published') === null);
+
+  inFrame('State.calendarEvents = [{ id: "ev-draft", title: "Draft", date: "2026-01-05", '
+        + 'platform: "linkedin", status: "draft", body: "draft body text" }]');
+  $('autoPostContent').value = '';
+  w.postToPublisher('ev-draft');
+  check('an unapproved post cannot reach the publisher', $('autoPostContent').value === '');
+  inFrame('State.calendarEvents[0].status = "approved"');
+  w.postToPublisher('ev-draft');
+  check('an approved post does reach the publisher', $('autoPostContent').value.length > 0);
+  check('markdown is stripped from the publisher payload', !$('autoPostContent').value.includes('**'));
+
+  /* publish pre-flight */
+  w.switchPage('accounts');
+  $('autoPostContent').value = 'Smoke test body for the pre-flight check';
+  d.querySelectorAll('input[name="autoPlat"]').forEach(cb => { cb.checked = cb.value === 'instagram'; });
+  $('autoPostMedia').value = '';
+  w.previewAutoPost();
+  check('pre-flight flags Instagram without a media URL', $('publishLog').textContent.includes('image URL'));
+  d.querySelectorAll('input[name="autoPlat"]').forEach(cb => { cb.checked = cb.value === 'facebook'; });
+  w.previewAutoPost();
+  check('pre-flight passes a valid Facebook post', $('publishLog').textContent.includes('ready'));
+
+  /* relay awareness */
+  check('relay chip explains what to run when offline', ($('relayChip').textContent || '').length > 10);
+
+  /* calendar + detail drawer */
+  w.switchPage('calendar');
+  check('calendar renders day cells', d.querySelectorAll('.cal-cell').length > 27);
+  w.renderPostDetail('ev-draft');
+  check('post detail drawer opens with workflow controls',
+        !$('postDetail').classList.contains('hidden') && $('postDetail').innerHTML.includes('Move to'));
+
+  /* misc surfaces */
+  check('workspace export is available', typeof w.exportWorkspace === 'function');
+  check('guardrails are loaded into the UI', !!$('guardBannedWords'));
+  check('trend analysis surface exists', typeof w.analyzeTrends === 'function');
+
+  /* still clean after the whole run */
+  const finalErrors = agentLog().filter(e => e.source === 'app.runtime' || e.source === 'app.promise');
+  check('no uncaught runtime errors accumulated during the run', finalErrors.length === 0,
+        finalErrors.map(e => e.message).join(' | '));
+
+  // Screenshot mode: switch to the requested page and clear the transient test
+  // chrome (open panels, toasts) so the capture shows the product, not the test.
+  const theme = new URLSearchParams(location.search).get('page');
+  if (theme) {
+    try {
+      const notif = $('notifPanel'); if (notif) notif.classList.remove('open');
+      const toasts = $('toastContainer'); if (toasts) toasts.innerHTML = '';
+      w.switchPage(theme);
+      await sleep(400);
+    } catch (e) { /* screenshot mode is best-effort */ }
+  }
+
+  document.getElementById('result').textContent = 'SMOKE_JSON:' + JSON.stringify(results);
+  await signalDone();
+})().catch(async (err) => {
+  // Keep whatever already passed so the report is still diagnostic.
+  results.push({ name: 'harness ran to completion', ok: false,
+                 detail: err && err.stack ? err.stack : String(err) });
+  document.getElementById('result').textContent = 'SMOKE_JSON:' + JSON.stringify(results);
+  await signalDone();
+});
+
+/* Release the load gate so Chrome can capture. Never let this hang the run. */
+async function signalDone() {
+  try { await fetch('/__done'); } catch (e) { /* gate already timed out */ }
+}
+</script></body></html>

@@ -451,7 +451,7 @@ Register:
 { "mcpServers": { "nexus": { "command": "python3", "args": ["agent/nexus_mcp.py"] } } }
 ```
 
-**Exposed tools (11):** `generate_content`, `plan_campaign`, `hashtag_research`, `browser_navigate`, `browser_snapshot`, `browser_screenshot`, `browser_act` (permission-gated), `devtools_inspect`, `render_video`, `telegram_notify`, `read_agent_logs`. Verify: `python3 agent/nexus_mcp.py --self-test`.
+**Exposed tools (13):** `generate_content`, `plan_campaign`, `hashtag_research`, `browser_navigate`, `browser_snapshot`, `browser_screenshot`, `browser_act` (permission-gated), `devtools_inspect`, `render_video`, `telegram_notify`, `read_agent_logs`, `publish_post` (publishes to a live platform), `read_publish_queue`. Verify: `python3 agent/nexus_mcp.py --self-test`.
 
 **Adding future tools (Adobe After Effects, Premiere, Canva, CRMs):** implement a handler function + schema entry in `TOOLS` — see §Creative Studio Bridge below for the AE plan. Interop repos: https://github.com/modelcontextprotocol/python-sdk · https://github.com/microsoft/playwright-mcp · https://github.com/ChromeDevTools/chrome-devtools-mcp
 

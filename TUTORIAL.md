@@ -39,8 +39,8 @@ cd skill/digital-marketer/scripts && ./daily_run.sh "your topic"
 or give the scheduler prompt to Google Antigravity (it executes `generate_content.py`, which auto-detects your local server).
 
 ## 6. Ads skill sets
-- **Meta Ads** reference: `skill/digital-marketer/references/meta_ads_skillset.md` (campaign structure, Advantage+, audiences, CPM/CPC/ROAS benchmarks, placements, tracking).
-- **Google Ads** reference: `skill/digital-marketer/references/google_ads_skillset.md` (Search/PMax/Demand Gen, Quality Score, negatives, bidding strategies).
+- **Meta Ads** reference: `skill/digital-marketer/references/platform_best_practices.md` (campaign structure, Advantage+, audiences, CPM/CPC/ROAS benchmarks, placements, tracking).
+- **Google Ads** reference: `skill/digital-marketer/references/platform_best_practices.md` (Search/PMax/Demand Gen, Quality Score, negatives, bidding strategies).
 Ask the agent: *"Design a Meta Ads campaign for X with $30/day budget"* — the skill system prompt forces full funnel output.
 
 ## 7. Error reporting & documentation (sidebar → 🚨 Agent Logs)

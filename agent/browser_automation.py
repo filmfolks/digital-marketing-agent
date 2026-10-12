@@ -49,6 +49,44 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 AUDIT_LOG = ROOT / "logs" / "browser_audit.jsonl"
 
+# Session state: which page the agent is on, and a persistent browser profile so
+# cookies/logins survive between CLI invocations.
+#
+# BUG FIX (architectural): every command used to launch and close its own
+# headless browser, so `navigate` → `snapshot` → `act` could never work — the
+# second command always saw a blank about:blank page. The URL is now remembered
+# and restored, and logins persist in a real Chrome profile directory.
+SESSION_FILE = ROOT / "logs" / "browser_session.json"
+PROFILE_DIR = ROOT / "logs" / "browser_profile"
+
+
+def load_session() -> dict:
+    try:
+        return json.loads(SESSION_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_session(**updates) -> dict:
+    state = load_session()
+    state.update(updates)
+    state["updated_at"] = now_iso()
+    try:
+        SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SESSION_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+    return state
+
+
+def clear_session() -> None:
+    for p in (SESSION_FILE,):
+        try:
+            p.unlink()
+        except OSError:
+            pass
+
+
 # Destructive patterns — refused even when actions are allowed
 DENY_PATTERNS = [
     r"delete[_ -]?(my[_ -])?account", r"log\s*out", r"sign\s*out",
@@ -67,20 +105,31 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def audit(command: str, args: dict, status: str, detail: str = "") -> None:
-    """Every browser operation is documented — success or failure."""
+def audit(command: str, args: dict, status: str, detail: str = "", **extra) -> None:
+    """Every browser operation is documented — success or failure.
+
+    BUG FIX: this used to `print()` the audit line to **stdout**, before/after
+    the JSON payload. Callers that parse stdout (nexus_mcp.run_py, the relay)
+    then got `{...json...}\n[audit] OK …` and json.loads raised "Extra data",
+    so EVERY MCP browser tool reported failure. Human-readable logging belongs
+    on stderr; stdout is reserved for the machine-readable result.
+    """
     AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
     entry = {
         "ts": now_iso(),
         "engine": get_engine_name(),
         "command": command,
-        "args": {k: v for k, v in args.items() if k != "func"},
+        "args": {k: v for k, v in args.items() if k not in ("func",)},
         "status": status,            # ok | blocked | error
         "detail": detail[:500],
+        **extra,
     }
-    with AUDIT_LOG.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    print(f"[audit] {status.upper():7s} {command}: {(detail or status)[:120]}")
+    try:
+        with AUDIT_LOG.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError as e:              # never let logging break the command
+        print(f"[audit] could not write audit log: {e}", file=sys.stderr)
+    print(f"[audit] {status.upper():7s} {command}: {(detail or status)[:120]}", file=sys.stderr)
 
 
 def is_denied(*targets: str) -> bool:
@@ -105,24 +154,64 @@ class PlaywrightEngine:
         self._pw = sync_playwright().start()
         self._headless = headless
         self.browser = None
+        self.context = None
         self.page = None
         self.console_messages = []
+        self.restored = False
 
-    def _ensure(self):
-        if self.browser is None:
-            self.browser = self._pw.chromium.launch(headless=self._headless)
-            ctx = self.browser.new_context(
+    def _ensure(self, restore: bool = True):
+        """Launch (once per process) with a PERSISTENT profile.
+
+        `launch_persistent_context` keeps cookies and localStorage in
+        logs/browser_profile, so a user can log into Instagram/LinkedIn once and
+        every later invocation is already authenticated.
+        """
+        if self.browser is not None or self.page is not None:
+            return
+        PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            self.context = self._pw.chromium.launch_persistent_context(
+                user_data_dir=str(PROFILE_DIR),
+                headless=self._headless,
                 viewport={"width": 1280, "height": 900},
-                user_agent="NexusAgent/1.0 (+local social media manager)")
-            self.page = ctx.new_page()
-            self.page.on("console", lambda m: self.console_messages.append(
-                {"type": m.type, "text": m.text, "ts": now_iso()}))
+                user_agent="NexusAgent/3.0 (+local social media manager)",
+                args=["--no-first-run", "--no-default-browser-check"],
+            )
+            self.browser = self.context
+            self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
+        except Exception as e:
+            # Some locked-down environments forbid a persistent profile; fall
+            # back to an ephemeral context rather than failing the command.
+            print(f"[info] persistent profile unavailable ({str(e)[:100]}) — using an ephemeral context",
+                  file=sys.stderr)
+            self.browser = self._pw.chromium.launch(headless=self._headless)
+            self.context = self.browser.new_context(
+                viewport={"width": 1280, "height": 900},
+                user_agent="NexusAgent/3.0 (+local social media manager)")
+            self.page = self.context.new_page()
+
+        self.page.on("console", lambda m: self.console_messages.append(
+            {"type": m.type, "text": m.text, "ts": now_iso()}))
+
+        # Restore the last page so a multi-command workflow (navigate → snapshot
+        # → act) operates on the same document instead of a blank tab.
+        if restore:
+            state = load_session()
+            url = state.get("url")
+            if url and not url.startswith("about:"):
+                try:
+                    self.page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                    self.restored = True
+                except Exception as e:
+                    print(f"[info] could not restore {url}: {str(e)[:120]}", file=sys.stderr)
 
     def navigate(self, url):
-        self._ensure()
+        self._ensure(restore=False)
         self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
         self.page.wait_for_timeout(800)
-        return {"url": self.page.url, "title": self.page.title()}
+        save_session(url=self.page.url, title=self.page.title())
+        return {"url": self.page.url, "title": self.page.title(),
+                "session": "saved (later commands reuse this tab)"}
 
     def snapshot(self):
         self._ensure()
@@ -181,6 +270,9 @@ class PlaywrightEngine:
         try:
             if self.browser:
                 self.browser.close()
+        except Exception:
+            pass
+        try:
             self._pw.stop()
         except Exception:
             pass
@@ -268,10 +360,13 @@ class CDPEngine:
             if not hit:
                 raise RuntimeError(f"Selector not found: {target}")
         elif action == "type":
-            self._eval("(() => {const e=document.querySelector(%s);"
-                       "if(!e) return false; e.focus(); e.value=%s;"
-                       "e.dispatchEvent(new Event('input',{bubbles:true})); return true;})()"
-                       % (json.dumps(target), json.dumps(value)))
+            hit = self._eval("(() => {const e=document.querySelector(%s);"
+                             "if(!e) return false; e.focus(); e.value=%s;"
+                             "e.dispatchEvent(new Event('input',{bubbles:true}));"
+                             "e.dispatchEvent(new Event('change',{bubbles:true})); return true;})()"
+                             % (json.dumps(target), json.dumps(value)))
+            if not hit:
+                raise RuntimeError(f"Selector not found: {target}")
         else:
             raise ValueError(f"Action '{action}' needs the Playwright engine")
         time.sleep(0.5)
@@ -390,6 +485,27 @@ def cmd_devtools(engine, args):
     audit("devtools", vars(args), "ok", args.what)
 
 
+def cmd_status(engine, args):
+    """Report engine availability, profile and remembered page."""
+    ok, why = _playwright_ready()
+    state = load_session()
+    emit({
+        "playwright": {"available": ok, "detail": why},
+        "profile_dir": str(PROFILE_DIR),
+        "profile_exists": PROFILE_DIR.exists(),
+        "session": state or None,
+        "deny_patterns": DENY_PATTERNS,
+    })
+    audit("status", vars(args), "ok", "playwright=" + ("yes" if ok else "no"))
+
+
+def cmd_close(engine, args):
+    """Forget the remembered page (keeps the saved logins)."""
+    clear_session()
+    emit({"ok": True, "session": "cleared", "profile": "kept — logins preserved"})
+    audit("close", vars(args), "ok", "session cleared")
+
+
 def precheck(args):
     """BUG FIX: permission & deny-list checks must run BEFORE any browser is
     launched. Previously main() did `engine = make_engine(args)` first, so a
@@ -430,9 +546,18 @@ def main():
     sp.add_argument("--allow-actions", action="store_true", help="User granted browser-action permission in Settings")
     sp.set_defaults(func=cmd_act)
     sp = sub.add_parser("devtools"); sp.add_argument("--what", choices=["console", "perf", "network"], default="console"); sp.set_defaults(func=cmd_devtools)
+    sp = sub.add_parser("status"); sp.set_defaults(func=cmd_status)
+    sp = sub.add_parser("close"); sp.set_defaults(func=cmd_close)
 
     args = p.parse_args()
     precheck(args)          # permission/deny checks BEFORE launching a browser
+
+    # status/close are pure bookkeeping — they must work even with no browser
+    # installed, so they bypass the engine factory entirely.
+    if args.cmd in ("status", "close"):
+        args.func(None, args)
+        return
+
     engine = make_engine(args)
     try:
         args.func(engine, args)
@@ -440,7 +565,7 @@ def main():
         raise
     except Exception as e:
         audit(args.cmd, vars(args), "error", str(e))
-        print(json.dumps({"error": str(e), "type": type(e).__name__}, ensure_ascii=False))
+        emit({"error": str(e), "type": type(e).__name__})
         sys.exit(1)
     finally:
         engine.close()

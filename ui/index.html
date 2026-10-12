@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Nexus — AI-Powered Digital Marketing Command Center for social media, content creation, and campaign automation.">
+    <meta name="theme-color" content="#7c3aed">
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="manifest" href="manifest.json">
     <title>Nexus — Marketing Command Center</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -77,6 +80,9 @@
                 <li class="nav-item" data-page="hashtags">
                     <a href="#" class="nav-link"><i class="ph ph-hash"></i><span>Hashtag Tool</span></a>
                 </li>
+                <li class="nav-item" data-page="utm">
+                    <a href="#" class="nav-link"><i class="ph ph-link"></i><span>UTM Builder</span></a>
+                </li>
                 <li class="nav-item" data-page="analytics">
                     <a href="#" class="nav-link"><i class="ph ph-chart-line-up"></i><span>Analytics</span></a>
                 </li>
@@ -102,14 +108,17 @@
                     <span class="status-dot"></span>
                     <span class="status-text">Agent: Ready</span>
                 </div>
+                <div class="relay-chip" id="relayChip" title="Local relay status (browser automation + publishing)">⚪ Relay offline — run: python3 agent/nexus_relay.py</div>
             </div>
         </nav>
+        <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
 
         <!-- ══════════════ MAIN ══════════════ -->
         <main class="main-area">
             <!-- Top Header -->
             <header class="top-bar">
                 <div class="topbar-left">
+                    <button class="icon-btn glass-card mobile-nav-btn" id="mobileNavBtn" aria-label="Open menu"><i class="ph ph-list"></i></button>
                     <h1 class="page-heading" id="pageHeading">Dashboard</h1>
                 </div>
                 <div class="topbar-right">
@@ -117,14 +126,16 @@
                         <i class="ph ph-cpu"></i>
                         <select id="modelSelect">
                             <option value="antigravity">Google Antigravity (Agentic)</option>
-                            <option value="cloud">Cloud API (Gemini/Groq/Claude)</option>
+                            <option value="cloud">Cloud API (7 providers + fail-over)</option>
                             <option value="local">Local AI (LM Studio/Ollama)</option>
+                            <option value="builtin">Built-in engine (offline, no API)</option>
                         </select>
                     </div>
-                    <button class="icon-btn glass-card" id="notifBtn">
+                    <button class="icon-btn glass-card" id="notifBtn" type="button" aria-label="Notifications">
                         <i class="ph ph-bell"></i>
-                        <span class="notif-dot"></span>
+                        <span class="notif-dot" id="notifDot"></span>
                     </button>
+                    <div class="notif-panel glass-card" id="notifPanel"></div>
                     <div class="avatar-chip glass-card">
                         <img src="https://ui-avatars.com/api/?name=Marketer&background=7c3aed&color=fff&size=32" alt="Profile">
                         <span>Marketer</span>
@@ -137,7 +148,7 @@
                 <div class="greeting-banner glass-card fade-up">
                     <div class="greeting-text">
                         <h2 id="greetingText">Good Morning! 🚀</h2>
-                        <p>Your AI marketing agent is ready. Here's today's overview.</p>
+                        <p>Your AI marketing agent is ready. Workspace metrics below are from your calendar, drafts, and publish queue — not estimated follower reach.</p>
                     </div>
                     <div class="quick-actions">
                         <button class="qbtn qbtn-primary" onclick="switchPage('agent')"><i class="ph-fill ph-robot"></i> Instruct Agent</button>
@@ -150,34 +161,34 @@
                     <div class="kpi-card glass-card kpi-purple">
                         <div class="kpi-icon"><i class="ph ph-users-three"></i></div>
                         <div class="kpi-data">
-                            <div class="kpi-val" data-count="124500">0</div>
-                            <div class="kpi-label">Total Reach</div>
+                            <div class="kpi-val" id="kpiQueued" data-count="0">0</div>
+                            <div class="kpi-label">Queued / Scheduled</div>
                         </div>
-                        <div class="kpi-trend up"><i class="ph ph-arrow-up-right"></i>+12.5%</div>
+                        <div class="kpi-trend up" id="kpiQueuedTrend"><i class="ph ph-calendar-blank"></i>Live</div>
                     </div>
                     <div class="kpi-card glass-card kpi-pink">
                         <div class="kpi-icon"><i class="ph ph-heart"></i></div>
                         <div class="kpi-data">
-                            <div class="kpi-val">8.2%</div>
-                            <div class="kpi-label">Avg. Engagement</div>
+                            <div class="kpi-val" id="kpiGenerated">0</div>
+                            <div class="kpi-label">Pieces Generated</div>
                         </div>
-                        <div class="kpi-trend up"><i class="ph ph-arrow-up-right"></i>+1.2%</div>
+                        <div class="kpi-trend up" id="kpiGeneratedTrend"><i class="ph ph-pen-nib"></i>This device</div>
                     </div>
                     <div class="kpi-card glass-card kpi-blue">
                         <div class="kpi-icon"><i class="ph ph-paper-plane-tilt"></i></div>
                         <div class="kpi-data">
-                            <div class="kpi-val" data-count="47">0</div>
-                            <div class="kpi-label">Posts This Month</div>
+                            <div class="kpi-val" id="kpiMonth" data-count="0">0</div>
+                            <div class="kpi-label">Calendar Posts This Month</div>
                         </div>
-                        <div class="kpi-trend up"><i class="ph ph-arrow-up-right"></i>+8</div>
+                        <div class="kpi-trend up" id="kpiMonthTrend"><i class="ph ph-arrow-up-right"></i>0</div>
                     </div>
                     <div class="kpi-card glass-card kpi-orange">
                         <div class="kpi-icon"><i class="ph ph-rocket-launch"></i></div>
                         <div class="kpi-data">
-                            <div class="kpi-val" data-count="3">0</div>
-                            <div class="kpi-label">Active Campaigns</div>
+                            <div class="kpi-val" id="kpiPublished" data-count="0">0</div>
+                            <div class="kpi-label">Published (queue)</div>
                         </div>
-                        <div class="kpi-trend neutral"><i class="ph ph-minus"></i>Steady</div>
+                        <div class="kpi-trend neutral" id="kpiPublishedTrend"><i class="ph ph-paper-plane-tilt"></i>API</div>
                     </div>
                 </div>
 
@@ -189,27 +200,8 @@
                             <h3>Platform Performance</h3>
                             <span class="chip">This Month</span>
                         </div>
-                        <div class="platform-bars">
-                            <div class="pbar-row">
-                                <div class="pbar-label"><i class="ph-fill ph-instagram-logo ig-color"></i> Instagram</div>
-                                <div class="pbar-track"><div class="pbar-fill" style="width:78%;background:var(--ig-grad)"></div></div>
-                                <div class="pbar-val">78%</div>
-                            </div>
-                            <div class="pbar-row">
-                                <div class="pbar-label"><i class="ph-fill ph-facebook-logo" style="color:#1877f2"></i> Facebook</div>
-                                <div class="pbar-track"><div class="pbar-fill" style="width:52%;background:linear-gradient(90deg,#1877f2,#0d65d9)"></div></div>
-                                <div class="pbar-val">52%</div>
-                            </div>
-                            <div class="pbar-row">
-                                <div class="pbar-label"><i class="ph-fill ph-youtube-logo" style="color:#ff0000"></i> YouTube</div>
-                                <div class="pbar-track"><div class="pbar-fill" style="width:65%;background:linear-gradient(90deg,#ff0000,#cc0000)"></div></div>
-                                <div class="pbar-val">65%</div>
-                            </div>
-                            <div class="pbar-row">
-                                <div class="pbar-label"><i class="ph-fill ph-linkedin-logo" style="color:#0a66c2"></i> LinkedIn</div>
-                                <div class="pbar-track"><div class="pbar-fill" style="width:41%;background:linear-gradient(90deg,#0a66c2,#004182)"></div></div>
-                                <div class="pbar-val">41%</div>
-                            </div>
+                        <div class="platform-bars" id="platformBars">
+                            <!-- Filled from calendar mix -->
                         </div>
                     </div>
 
@@ -268,6 +260,7 @@
                                     <label class="ppill ppill-yt"><input type="checkbox" value="youtube"><span><i class="ph-fill ph-youtube-logo"></i> YouTube</span></label>
                                     <label class="ppill ppill-li"><input type="checkbox" value="linkedin"><span><i class="ph-fill ph-linkedin-logo"></i> LinkedIn</span></label>
                                     <label class="ppill ppill-tw"><input type="checkbox" value="twitter"><span><i class="ph-fill ph-twitter-logo"></i> Twitter/X</span></label>
+                                    <label class="ppill ppill-tk"><input type="checkbox" value="tiktok"><span><i class="ph-fill ph-tiktok-logo"></i> TikTok</span></label>
                                     <label class="ppill ppill-blog"><input type="checkbox" value="blog"><span><i class="ph ph-article"></i> Blog</span></label>
                                 </div>
                             </div>
@@ -291,10 +284,14 @@
 
                             <div class="form-actions-row">
                                 <button type="button" class="btn btn-ghost" id="saveDraftBtn"><i class="ph ph-floppy-disk"></i> Save Draft</button>
+                                <button type="button" class="btn btn-ghost btn-danger hidden" id="dispatchCancelBtn" onclick="cancelDispatch()">
+                                    <i class="ph ph-x-circle"></i> Cancel
+                                </button>
                                 <button type="submit" class="btn btn-primary" id="dispatchBtn">
                                     <i class="ph-fill ph-paper-plane-tilt"></i> Generate Content
                                 </button>
                             </div>
+                            <p class="helper-text" style="margin-top:8px">Provider failures retry with backoff and fail over automatically; if every provider is down you still get an offline draft. Press <kbd>⌘K</kbd> for the command palette.</p>
                         </form>
 
                         <div class="agent-feedback hidden" id="agentFeedback">
@@ -312,6 +309,8 @@
                             <h3><i class="ph ph-scroll"></i> Generated Content</h3>
                             <div class="output-actions">
                                 <button class="btn btn-ghost btn-sm" id="copyOutputBtn" onclick="copyOutput()"><i class="ph ph-copy"></i> Copy All</button>
+                                <button class="btn btn-ghost btn-sm" type="button" onclick="sendOutputToPublisher()"><i class="ph ph-paper-plane-tilt"></i> Send to Publisher</button>
+                                <button class="btn btn-ghost btn-sm" type="button" onclick="addOutputToCalendar()"><i class="ph ph-calendar-plus"></i> Add to Calendar</button>
                                 <button class="btn btn-ghost btn-sm" id="clearOutputBtn" onclick="clearOutput()"><i class="ph ph-trash"></i> Clear</button>
                             </div>
                         </div>
@@ -510,12 +509,14 @@
                             <button class="btn btn-primary" id="genABBtn"><i class="ph ph-git-branch"></i> Generate A/B Variants</button>
                             <div class="studio-output ab-output" id="abOutput"></div>
                         </div>
+
                     </div>
                 </div>
             </div>
 
             <!-- ═══ PAGE: CALENDAR ═══ -->
             <div class="page-content" id="page-calendar">
+                <p class="helper-text" id="calendarSummary" style="margin-bottom:10px"></p>
                 <div class="glass-card calendar-card fade-up">
                     <div class="card-header">
                         <h3><i class="ph ph-calendar-blank"></i> Content Calendar</h3>
@@ -524,10 +525,13 @@
                             <span id="calMonthLabel" class="calendar-month-label">October 2026</span>
                             <button class="btn btn-ghost btn-sm" id="nextMonth"><i class="ph ph-caret-right"></i></button>
                         </div>
+                        <button class="btn btn-ghost btn-sm" id="planWeekBtn" type="button"><i class="ph ph-calendar-plus"></i> Auto-plan 7 days</button>
                         <button class="btn btn-primary btn-sm" id="addEventBtn"><i class="ph ph-plus"></i> Add Post</button>
                     </div>
                     <div class="calendar-grid" id="calendarGrid"></div>
                 </div>
+
+                <div class="glass-card post-detail hidden" id="postDetail"></div>
 
                 <!-- Add Event Modal -->
                 <div class="modal-overlay hidden" id="addEventModal">
@@ -558,16 +562,20 @@
                                 <option value="youtube">YouTube</option>
                                 <option value="linkedin">LinkedIn</option>
                                 <option value="twitter">Twitter/X</option>
+                                <option value="tiktok">TikTok</option>
                                 <option value="blog">Blog</option>
                             </select>
                         </div>
                         <div class="form-field">
                             <label>Status</label>
                             <select id="eventStatus">
-                                <option value="planning">Planning</option>
                                 <option value="draft">Draft</option>
+                                <option value="in_review">In review</option>
+                                <option value="approved">Approved</option>
                                 <option value="scheduled">Scheduled</option>
+                                <option value="published">Published</option>
                             </select>
+                            <p class="helper-text">Approval flow: draft → in review → approved → scheduled → published. Only approved posts can be sent to the publisher.</p>
                         </div>
                         <div class="modal-actions">
                             <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -583,16 +591,10 @@
                     <div class="glass-card analytics-summary">
                         <div class="card-header">
                             <h3><i class="ph ph-chart-line-up"></i> Monthly Performance Report</h3>
-                            <span class="chip">October 2026</span>
+                            <span class="chip">This workspace</span>
                         </div>
-                        <div class="analytics-kpis">
-                            <div class="akpi"><div class="akpi-val">124.5K</div><div class="akpi-label">Total Reach</div></div>
-                            <div class="akpi"><div class="akpi-val">8.2%</div><div class="akpi-label">Avg. Engagement Rate</div></div>
-                            <div class="akpi"><div class="akpi-val">3,420</div><div class="akpi-label">Profile Visits</div></div>
-                            <div class="akpi"><div class="akpi-val">1,205</div><div class="akpi-label">New Followers</div></div>
-                            <div class="akpi"><div class="akpi-val">47</div><div class="akpi-label">Posts Published</div></div>
-                            <div class="akpi"><div class="akpi-val">$1.24</div><div class="akpi-label">Avg. CPM</div></div>
-                        </div>
+                        <p class="helper-text">These KPIs come from real data only: your calendar, generation history and publish queue. Import a platform export below to unlock engagement rate, CTR, CPC, CPM, CPA and ROAS.</p>
+                        <div class="analytics-kpis" id="analyticsKpis"></div>
                     </div>
                     <div class="glass-card top-posts-card">
                         <div class="card-header">
@@ -603,10 +605,41 @@
                         </div>
                     </div>
                     <div class="glass-card recommendations-card">
-                        <div class="card-header"><h3><i class="ph ph-lightbulb"></i> AI Recommendations</h3></div>
+                        <div class="card-header"><h3><i class="ph ph-lightbulb"></i> Recommendations</h3></div>
                         <ul class="rec-list" id="recList">
                             <!-- Filled by JS -->
                         </ul>
+                    </div>
+
+                    <div class="glass-card metrics-import-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-upload-simple"></i> Import Performance Data</h3>
+                            <span class="helper-text">CSV or TSV — nothing leaves your machine</span>
+                        </div>
+                        <p class="helper-text">Paste an export from Instagram/Facebook Insights, X analytics, LinkedIn, GA4 or an ads manager. Nexus computes engagement rate, CTR, CPC, CPM, CPA and ROAS — and leaves any metric blank rather than guessing. <button class="link-btn" type="button" onclick="downloadAnalyticsTemplate()">Download the CSV template</button> · <button class="link-btn" type="button" onclick="loadSampleAnalytics()">Load a sample</button></p>
+                        <div class="form-row">
+                            <div class="form-field" style="flex:2">
+                                <label>Paste CSV / TSV</label>
+                                <textarea id="analyticsCsv" rows="6" placeholder="date,platform,campaign,impressions,reach,likes,comments,shares,saves,clicks,conversions,spend,revenue&#10;2026-01-05,instagram,launch,48200,31500,1420,180,95,240,610,42,120,980"></textarea>
+                            </div>
+                            <div class="form-field">
+                                <label>Or upload a file</label>
+                                <input type="file" id="analyticsFile" accept=".csv,.tsv,.txt" onchange="handleAnalyticsFile(this)">
+                                <div class="form-actions-row" style="margin-top:12px">
+                                    <button class="btn btn-primary btn-sm" type="button" onclick="analyzePerformance()"><i class="ph ph-calculator"></i> Analyse</button>
+                                    <button class="btn btn-ghost btn-sm" type="button" onclick="clearAnalytics()"><i class="ph ph-trash"></i> Clear</button>
+                                </div>
+                            </div>
+                        </div>
+                        <p class="helper-text" id="analyticsSummaryLine" style="margin-top:6px"></p>
+                        <div class="metrics-table-wrap" id="analyticsTable">
+                            <p class="helper-text">No performance data loaded yet.</p>
+                        </div>
+                    </div>
+
+                    <div class="glass-card insights-card">
+                        <div class="card-header"><h3><i class="ph ph-magnifying-glass-chart"></i> What the numbers say</h3></div>
+                        <ul class="rec-list" id="analyticsInsights"></ul>
                     </div>
                 </div>
             </div>
@@ -690,6 +723,7 @@
                                         <label>API Key (saved to browser storage)</label>
                                         <input type="password" id="cloudApiKey" placeholder="sk-...">
                                     </div>
+                                    <p class="helper-text" id="providerHint"></p>
                                     <button class="btn btn-ghost btn-sm" onclick="saveProviderKey()" type="button"><i class="ph ph-floppy-disk"></i> Save Key for Provider</button>
                                     <button class="btn btn-ghost btn-sm" onclick="pingProvider()" type="button"><i class="ph ph-lightning"></i> Test Provider</button>
                                     <span id="providerTestResult" style="font-size:.8rem;margin-left:8px;"></span>
@@ -755,6 +789,59 @@
                             </div>
                         </div>
 
+                        <div class="settings-section">
+                            <h4>Brand Guardrails</h4>
+                            <p class="helper-text">Applied to every generation before you see it. Banned terms are replaced, hashtags are capped, and the disclaimer is appended — each adjustment is reported in Agent Logs.</p>
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label><input type="checkbox" id="guardEnabled" checked> Enable guardrails</label>
+                                    <label style="margin-top:10px"><input type="checkbox" id="guardAllowEmoji" checked> Allow emoji</label>
+                                </div>
+                                <div class="form-field">
+                                    <label>Maximum hashtags</label>
+                                    <input type="number" id="guardMaxHashtags" min="0" max="60" value="30">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>Banned words / phrases (comma separated)</label>
+                                    <input type="text" id="guardBannedWords" placeholder="cheap, guaranteed results, hack">
+                                </div>
+                                <div class="form-field">
+                                    <label>Required disclaimer (comma-separated list also works)</label>
+                                    <input type="text" id="guardDisclaimer" placeholder="Not financial advice.">
+                                </div>
+                            </div>
+                            <button class="btn btn-ghost" type="button" onclick="saveGuardrails()"><i class="ph ph-shield-check"></i> Save guardrails</button>
+                        </div>
+
+                        <div class="settings-section">
+                            <h4>Local Relay</h4>
+                            <p class="helper-text">The relay (<code>python3 agent/nexus_relay.py</code>) executes browser automation and publishing on this machine. It only accepts requests from Nexus and, if you set <code>NEXUS_RELAY_TOKEN</code>, requires the token below.</p>
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>Relay token (optional but recommended)</label>
+                                    <input type="password" id="relayToken" placeholder="paste the token printed by the relay">
+                                </div>
+                                <div class="form-field" style="display:flex; align-items:flex-end;">
+                                    <button type="button" class="btn btn-ghost" style="width:100%" onclick="saveRelayToken()"><i class="ph ph-key"></i> Save &amp; test relay</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-section">
+                            <h4>Workspace Backup</h4>
+                            <p class="helper-text">Settings, calendar, generation history, logs and the queue live in this browser only. Export them before clearing site data or switching machines.</p>
+                            <div class="form-actions-row">
+                                <button class="btn btn-ghost" type="button" onclick="exportWorkspace()"><i class="ph ph-download-simple"></i> Export workspace</button>
+                                <button class="btn btn-ghost" type="button" onclick="exportWorkspace({includeSecrets:true})"><i class="ph ph-lock-key"></i> Export incl. credentials</button>
+                                <label class="btn btn-ghost" style="cursor:pointer"><i class="ph ph-upload-simple"></i> Import workspace
+                                    <input type="file" accept=".json" style="display:none" onchange="importWorkspace(this)">
+                                </label>
+                                <button class="btn btn-ghost btn-danger" type="button" onclick="clearWorkspace()"><i class="ph ph-trash"></i> Clear all data</button>
+                            </div>
+                        </div>
+
                         <button class="btn btn-primary" id="saveSettingsBtn"><i class="ph ph-floppy-disk"></i> Save Settings</button>
                     </div>
                 </div>
@@ -762,6 +849,7 @@
 
             <!-- ═══ PAGE: BROWSER AGENT ═══ -->
             <div class="page-content" id="page-browser">
+                <p class="helper-text" style="margin-bottom:10px">Read-only commands (navigate, snapshot, extract, screenshot, DevTools) run without permission. Click/type stay locked until you grant Browser Actions Permission below. Sessions persist between commands, so you can log in once and keep working.</p>
                 <div class="glass-card fade-up" style="padding:20px; margin-bottom:18px;">
                     <div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
                         <h3><i class="ph-fill ph-browser"></i> Browser Automation &amp; DevTools Skill</h3>
@@ -949,10 +1037,10 @@ var res = $.http.get("http://localhost:8957/brief"); // supergateway bridge</cod
                 <div class="trends-layout fade-up">
                     <div class="glass-card trends-card">
                         <div class="card-header">
-                            <h3><i class="ph ph-trend-up"></i> Trending Now <span class="live-pulse"></span></h3>
-                            <button class="btn btn-ghost btn-sm" id="refreshTrendsBtn"><i class="ph ph-arrows-clockwise"></i> Refresh</button>
+                            <h3><i class="ph ph-trend-up"></i> Trend Radar</h3>
+                            <button class="btn btn-ghost btn-sm" id="refreshTrendsBtn"><i class="ph ph-arrows-clockwise"></i> Load examples</button>
                         </div>
-                        <p class="helper-text">Real-time pulse of viral topics, audio, and hashtags across platforms.</p>
+                        <p class="helper-text">Nexus has no paid trend API, so this page never pretends to be live. Load the labelled example set to see the format, or paste a real export below and let the AI engine rank the opportunities for your brand. <span id="trendSourceNote" class="trend-source-note">EXAMPLE DATA — not live metrics</span></p>
                         
                         <div class="trends-grid">
                             <div class="trend-col">
@@ -980,6 +1068,88 @@ var res = $.http.get("http://localhost:8957/brief"); // supergateway bridge</cod
                                 </div>
                             </div>
                         </div>
+                    </div>
+
+                    <div class="glass-card trend-analysis-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-magnifying-glass"></i> Opportunity Scan</h3>
+                            <span class="chip">your data → ranked angles</span>
+                        </div>
+                        <p class="helper-text">Paste anything with trend signal: a Google Trends CSV export, platform search results, competitor notes, or a list of keywords. The engine ranks the top opportunities for your brand and flags what to skip.</p>
+                        <textarea id="trendSourceInput" rows="7" placeholder="keyword,search volume,change&#10;ai content workflow,12000,+180%&#10;short form video seo,8400,+65%"></textarea>
+                        <p class="helper-text" id="trendSourceSummary"></p>
+                        <div class="form-actions-row">
+                            <button class="btn btn-primary" id="trendAnalyzeBtn" type="button" onclick="analyzeTrends()"><i class="ph ph-sparkle"></i> Analyse with AI</button>
+                            <button class="btn btn-ghost" type="button" onclick="clearTrendSource()"><i class="ph ph-trash"></i> Clear</button>
+                        </div>
+                        <div id="trendAnalysisOutput" style="margin-top:12px"><p class="helper-text">No analysis yet.</p></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ PAGE: UTM BUILDER ═══ -->
+            <div class="page-content" id="page-utm">
+                <div class="utm-layout fade-up">
+                    <div class="glass-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-link"></i> UTM Campaign Link Builder</h3>
+                            <span class="chip">GA4-compatible</span>
+                        </div>
+                        <p class="helper-text">Untagged links make campaign reporting impossible. Build the tracked URL here and paste it into your CTA before the post goes out.</p>
+                        <div class="form-row">
+                            <div class="form-field">
+                                <label>Channel preset</label>
+                                <select id="utmPreset" onchange="applyUtmPreset()">
+                                    <option value="instagram">Instagram</option>
+                                    <option value="facebook">Facebook</option>
+                                    <option value="linkedin">LinkedIn</option>
+                                    <option value="twitter">X / Twitter</option>
+                                    <option value="tiktok">TikTok</option>
+                                    <option value="youtube">YouTube</option>
+                                    <option value="email">Email / Newsletter</option>
+                                    <option value="blog">Blog / Organic</option>
+                                    <option value="ads">Meta Ads (paid)</option>
+                                    <option value="googleads">Google Ads</option>
+                                </select>
+                            </div>
+                            <div class="form-field" style="flex:2">
+                                <label>Destination URL *</label>
+                                <input type="url" id="utmBase" placeholder="https://yourbrand.com/landing-page" oninput="buildUtm()">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-field">
+                                <label>utm_source *</label>
+                                <input type="text" id="utmSource" placeholder="instagram" oninput="buildUtm()">
+                            </div>
+                            <div class="form-field">
+                                <label>utm_medium *</label>
+                                <input type="text" id="utmMedium" placeholder="social" oninput="buildUtm()">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-field">
+                                <label>utm_campaign *</label>
+                                <input type="text" id="utmCampaign" placeholder="spring-launch" oninput="buildUtm()">
+                            </div>
+                            <div class="form-field">
+                                <label>utm_content (which creative)</label>
+                                <input type="text" id="utmContent" placeholder="reel-a" oninput="buildUtm()">
+                            </div>
+                            <div class="form-field">
+                                <label>utm_term (paid keywords)</label>
+                                <input type="text" id="utmTerm" placeholder="ai-marketing-tool" oninput="buildUtm()">
+                            </div>
+                        </div>
+                        <div class="form-field">
+                            <label>Tracked link</label>
+                            <pre class="utm-output" id="utmOutput">Fill in the destination URL and the three required parameters.</pre>
+                        </div>
+                        <div class="form-actions-row">
+                            <button class="btn btn-primary" type="button" onclick="copyUtm()"><i class="ph ph-copy"></i> Copy tracked link</button>
+                            <button class="btn btn-ghost" type="button" onclick="buildUtm()"><i class="ph ph-arrows-clockwise"></i> Rebuild</button>
+                        </div>
+                        <p class="helper-text">Rule of thumb: never change utm_source/medium once a campaign is live, or GA4 splits the session into two channels. Use utm_content to tell creatives apart.</p>
                     </div>
                 </div>
             </div>
@@ -1312,6 +1482,10 @@ var res = $.http.get("http://localhost:8957/brief"); // supergateway bridge</cod
                                     <input type="password" id="li-access-token" placeholder="OAuth Access Token" autocomplete="new-password">
                                 </div>
                             </div>
+                            <div class="form-field">
+                                <label>Person URN (required to post)</label>
+                                <input type="text" id="li-person-urn" placeholder="urn:li:person:XXXX or profile id">
+                            </div>
                             <div class="pac-guide">
                                 <details>
                                     <summary><i class="ph ph-info"></i> How to get LinkedIn API credentials</summary>
@@ -1390,20 +1564,35 @@ var res = $.http.get("http://localhost:8957/brief"); // supergateway bridge</cod
                                 <div class="platform-pills">
                                     <label class="ppill ppill-ig"><input type="checkbox" name="autoPlat" value="instagram" checked><span><i class="ph-fill ph-instagram-logo"></i> Instagram</span></label>
                                     <label class="ppill ppill-fb"><input type="checkbox" name="autoPlat" value="facebook" checked><span><i class="ph-fill ph-facebook-logo"></i> Facebook</span></label>
-                                    <label class="ppill ppill-yt"><input type="checkbox" name="autoPlat" value="youtube"><span><i class="ph-fill ph-youtube-logo"></i> YouTube</span></label>
                                     <label class="ppill ppill-tw"><input type="checkbox" name="autoPlat" value="twitter"><span><i class="ph-fill ph-twitter-logo"></i> Twitter/X</span></label>
                                     <label class="ppill ppill-li"><input type="checkbox" name="autoPlat" value="linkedin"><span><i class="ph-fill ph-linkedin-logo"></i> LinkedIn</span></label>
                                     <label class="ppill ppill-blog"><input type="checkbox" name="autoPlat" value="blogger"><span><i class="ph ph-globe-simple"></i> Blogger</span></label>
                                 </div>
+                                <p class="helper-text">YouTube is intentionally absent: the YouTube Data API has no text/community-post endpoint (video upload only), so Nexus will not pretend to publish there. Generate the YouTube package on the AI Agent page instead.</p>
                             </div>
                             <div class="form-actions-row">
-                                <button class="btn btn-ghost" onclick="previewAutoPost()"><i class="ph ph-eye"></i> Preview</button>
-                                <button class="btn btn-primary" onclick="publishNow()"><i class="ph ph-paper-plane-tilt"></i> Publish Now (API)</button>
+                                <button class="btn btn-ghost" type="button" onclick="previewAutoPost()"><i class="ph ph-eye"></i> Pre-flight check</button>
+                                <button class="btn btn-ghost" type="button" onclick="validatePublish()"><i class="ph ph-check-circle"></i> Validate (dry run)</button>
+                                <button class="btn btn-primary" type="button" onclick="publishNow()"><i class="ph ph-paper-plane-tilt"></i> Publish Now</button>
                             </div>
+                            <p class="helper-text">Pre-flight checks character limits and platform rules. Validate sends the exact payload with no API call, so you can prove the credentials work before anything goes public.</p>
                         </div>
 
                         <!-- Publish Log -->
                         <div class="publish-log" id="publishLog"></div>
+
+                        <!-- Publish queue (state lives in logs/publish_queue.json) -->
+                        <div class="queue-section">
+                            <div class="card-header" style="margin-top:28px">
+                                <h3><i class="ph ph-package"></i> Publish Queue</h3>
+                                <div class="output-actions">
+                                    <button class="btn btn-ghost btn-sm" type="button" onclick="refreshQueueView()"><i class="ph ph-arrows-clockwise"></i> Refresh</button>
+                                    <button class="btn btn-ghost btn-sm" type="button" onclick="publishDueJobs()"><i class="ph ph-play"></i> Process due now</button>
+                                </div>
+                            </div>
+                            <p class="helper-text" id="queueSummary">Queue state comes from the local relay, so scheduled posts survive closing this tab.</p>
+                            <div class="publish-log" id="queueList"><p class="helper-text">Open this page with the relay running to see queued jobs.</p></div>
+                        </div>
 
                         <!-- API Automation Scripts -->
                         <div class="api-scripts-section">
@@ -1462,9 +1651,14 @@ var res = $.http.get("http://localhost:8957/brief"); // supergateway bridge</cod
                                 </div>
                                 <div class="form-field">
                                     <label>Access Token</label>
-                                    <input type="password" id="canva-access-token" placeholder="Paste OAuth Access Token here" autocomplete="new-password">
+                                    <input type="password" id="canva-access-token" placeholder="Filled automatically after you authorize" autocomplete="new-password">
+                                </div>
+                                <div class="form-field">
+                                    <label>OAuth Redirect URI (must be registered in your Canva app)</label>
+                                    <input type="url" id="canva-redirect-uri" placeholder="http://localhost:8080/index.html">
                                 </div>
                             </div>
+                            <p class="helper-text">"Authorize with Canva" runs a real PKCE flow and stores the token automatically. It needs a secure context, so serve the UI (e.g. <code>python3 -m http.server 8080</code> inside <code>ui/</code>) rather than double-clicking the file.</p>
                             <div class="form-actions-row">
                                 <button class="btn btn-ghost" onclick="openCanvaAuth()"><i class="ph ph-sign-in"></i> Authorize with Canva</button>
                                 <button class="btn btn-primary" onclick="saveCanvaCredentials()"><i class="ph ph-floppy-disk"></i> Save & Connect</button>
@@ -1573,9 +1767,20 @@ var res = $.http.get("http://localhost:8957/brief"); // supergateway bridge</cod
         </main>
     </div>
 
+    <div class="palette-overlay hidden" id="paletteOverlay" role="dialog" aria-modal="true" aria-label="Command palette">
+        <div class="palette-card glass-card">
+            <input type="text" id="paletteInput" placeholder="Type a command…  (↑ ↓ to move, Enter to run, Esc to close)" autocomplete="off">
+            <div class="palette-results" id="paletteResults"></div>
+        </div>
+    </div>
+
     <div class="toast-container" id="toastContainer"></div>
-    <script src="credentials.js"></script>
     <script src="ai-client.js"></script>
     <script src="script.js"></script>
+    <script>
+        if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+            navigator.serviceWorker.register('sw.js').catch(() => {});
+        }
+    </script>
 </body>
 </html>

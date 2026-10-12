@@ -1,0 +1,17 @@
+{
+  "name": "Nexus Marketing Command Center",
+  "short_name": "Nexus",
+  "description": "AI digital marketing and social media automation workspace.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#7c3aed",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

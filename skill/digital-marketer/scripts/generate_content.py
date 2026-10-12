@@ -42,6 +42,11 @@ def load_env_file():
 
 load_env_file()
 
+
+class GenerationError(RuntimeError):
+    """Raised when a provider fails — lets main() exit non-zero instead of
+    silently saving an error string into the output file as if it were copy."""
+
 # Standard library HTTP requester
 def http_post_json(url, payload, headers=None, timeout=60):
     import urllib.request
@@ -118,7 +123,43 @@ PROVIDERS = {
         "api_key_env": "OPENAI_API_KEY",
         "default_model": "gpt-4o-mini",
     },
+    "xai": {
+        "name": "xAI Grok",
+        "url": "https://api.x.ai/v1/chat/completions",
+        "api_key_env": "XAI_API_KEY",
+        "default_model": "grok-4",
+    },
+    "openrouter": {
+        "name": "OpenRouter",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "api_key_env": "OPENROUTER_API_KEY",
+        "default_model": "nousresearch/hermes-4-405b",
+    },
+    "qwen": {
+        "name": "Qwen (DashScope)",
+        "url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "api_key_env": "QWEN_API_KEY",
+        "default_model": "qwen-plus",
+    },
 }
+
+
+def normalize_base_url(url: str, provider_key: str) -> str:
+    """Accept either a base URL or a full endpoint path.
+
+    BUG FIX: lm_studio_run.sh passes `--url http://localhost:1234/v1`, but the
+    provider table stores the full `/v1/chat/completions` path, so the script
+    POSTed to `http://localhost:1234/v1` and got a 404 from LM Studio. Both forms
+    now work, for any OpenAI-compatible server.
+    """
+    if not url:
+        return url
+    u = url.rstrip("/")
+    if u.endswith("/chat/completions"):
+        return u
+    if provider_key == "claude" and not u.endswith("/messages"):
+        return u + "/messages"
+    return u + "/chat/completions"
 
 def detect_best_provider():
     """Auto-detect available local LLM server or active cloud API key."""
@@ -133,7 +174,7 @@ def detect_best_provider():
         return "ollama"
 
     # 3. Check Cloud API keys in environment
-    for p in ["gemini", "groq", "deepseek", "openai", "claude"]:
+    for p in ["gemini", "groq", "deepseek", "openai", "claude", "xai", "openrouter", "qwen"]:
         env_key = PROVIDERS[p].get("api_key_env")
         if env_key and os.getenv(env_key):
             return p
@@ -158,7 +199,7 @@ Always output clean, copy-paste-ready Markdown."""
 def generate_for_platform(topic, platform, tone, brand, provider_key, model_name=None, custom_url=None):
     """Generate content for a single platform using chosen AI harness."""
     cfg = PROVIDERS.get(provider_key, PROVIDERS["lmstudio"])
-    url = custom_url or cfg["url"]
+    url = normalize_base_url(custom_url, provider_key) if custom_url else cfg["url"]
     
     # Model selection
     is_hermes = "hermes" in (model_name or "").lower()
@@ -214,14 +255,12 @@ Include:
         if choices:
             return choices[0].get("message", {}).get("content", "").strip()
         return "⚠️ Error: AI model returned empty choices array."
-    else:
-        err_msg = resp.get("error", "Unknown HTTP error")
-        return f"❌ Error generating {platform} content (HTTP {status}): {err_msg}"
+    err_msg = resp.get("error", "Unknown HTTP error")
+    raise GenerationError(f"HTTP {status} from {cfg['name']}: {err_msg}")
 
 def generate_claude(topic, platform, tone, brand, api_key, model):
     if not api_key:
-        return "❌ Anthropic API key missing. Set ANTHROPIC_API_KEY in environment or .env."
-    
+        raise GenerationError("Anthropic API key missing. Set ANTHROPIC_API_KEY in the environment or .env.")
     url = "https://api.anthropic.com/v1/messages"
     headers = {
         "Content-Type": "application/json",
@@ -241,13 +280,15 @@ def generate_claude(topic, platform, tone, brand, api_key, model):
         content = resp.get("content", [])
         if content and "text" in content[0]:
             return content[0]["text"].strip()
-    return f"❌ Claude API Error (HTTP {status}): {resp.get('error', 'Unknown')}"
+    raise GenerationError(f"Claude API error (HTTP {status}): {resp.get('error', 'Unknown')}")
 
 def save_content(content_dict, topic, brand):
     """Save generated content to a dated markdown file in output directory."""
-    today = datetime.now().strftime("%Y-%m-%d")
+    # Include the time so two runs on the same topic the same day no longer
+    # silently overwrite each other's output.
+    stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     safe_topic = "".join(c for c in topic if c.isalnum() or c in " _-").strip()[:40]
-    filename = f"content_{today}_{safe_topic.replace(' ', '_')}.md"
+    filename = f"content_{stamp}_{safe_topic.replace(' ', '_')}.md"
     
     output_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "output"))
     os.makedirs(output_dir, exist_ok=True)
@@ -269,19 +310,25 @@ def main():
     parser = argparse.ArgumentParser(description="Universal Digital Marketing Content Generator")
     parser.add_argument("--topic", help="Content topic or campaign theme")
     parser.add_argument("--platforms", nargs="+", default=["instagram", "facebook"],
-                        choices=["instagram", "facebook", "youtube", "linkedin", "twitter", "blog"],
+                        choices=["instagram", "facebook", "youtube", "linkedin", "twitter",
+                                 "tiktok", "blog", "email"],
                         help="Target social platforms")
     parser.add_argument("--tone", default="professional",
                         choices=["professional", "casual", "humorous", "inspirational", "educational", "urgent"],
                         help="Brand voice tone")
     parser.add_argument("--brand", default="", help="Brand name")
-    parser.add_argument("--provider", default="auto",
-                        choices=["auto", "lmstudio", "ollama", "gemini", "groq", "claude", "deepseek", "openai"],
+    parser.add_argument("--provider", default=os.getenv("AI_PROVIDER", "auto"),
+                        choices=["auto", "lmstudio", "ollama", "gemini", "groq", "claude",
+                                 "deepseek", "openai", "xai", "openrouter", "qwen"],
                         help="AI provider harness")
     parser.add_argument("--model", default=None, help="Specific model name (e.g. hermes-3-llama-3.1-8b, gemini-2.0-flash)")
     parser.add_argument("--url", default=None, help="Custom base URL for local or proxy API")
     parser.add_argument("--campaign-file", default=None, help="Path to campaign.json configuration")
     parser.add_argument("--test", action="store_true", help="Test connection to selected or detected AI provider")
+    parser.add_argument("--json", action="store_true",
+                        help="Machine-readable output on stdout (used by the MCP server / relay)")
+    parser.add_argument("--no-save", action="store_true",
+                        help="Do not write a markdown file into output/")
     args = parser.parse_args()
 
     # Determine provider
@@ -334,43 +381,79 @@ def main():
     brand = brand or "My Brand"
     topic = topic or "5 strategies for social media growth"
 
-    print("\n" + "="*60)
-    print("🚀 DIGITAL MARKETING AGENT — CONTENT GENERATOR")
-    print("="*60)
-    print(f"   Provider:  {cfg['name']}")
-    print(f"   Model:     {args.model or cfg.get('default_model')}")
-    print(f"   Brand:     {brand}")
-    print(f"   Topic:     {topic}")
-    print(f"   Tone:      {tone}")
-    print(f"   Platforms: {', '.join(platforms)}")
-    print("="*60 + "\n")
+    # In --json mode stdout belongs to the machine, so all narration goes to
+    # stderr. That is what lets nexus_mcp.py / the relay parse the result safely.
+    def say(*parts):
+        print(*parts, file=sys.stderr if args.json else sys.stdout)
+
+    say("\n" + "="*60)
+    say("🚀 DIGITAL MARKETING AGENT — CONTENT GENERATOR")
+    say("="*60)
+    say(f"   Provider:  {cfg['name']}")
+    say(f"   Model:     {args.model or cfg.get('default_model')}")
+    say(f"   Brand:     {brand}")
+    say(f"   Topic:     {topic}")
+    say(f"   Tone:      {tone}")
+    say(f"   Platforms: {', '.join(platforms)}")
+    say("="*60 + "\n")
 
     content_dict = {}
+    failures = []
     for p in platforms:
-        print(f"⚙️  Generating {p.upper()} content...", flush=True)
-        content = generate_for_platform(
-            topic=topic,
-            platform=p,
-            tone=tone,
-            brand=brand,
-            provider_key=provider,
-            model_name=args.model,
-            custom_url=args.url
-        )
-        content_dict[p] = content
-        print(f"   ✅ {p} finished.\n")
+        say(f"⚙️  Generating {p.upper()} content...")
+        try:
+            content = generate_for_platform(
+                topic=topic,
+                platform=p,
+                tone=tone,
+                brand=brand,
+                provider_key=provider,
+                model_name=args.model,
+                custom_url=args.url
+            )
+            content_dict[p] = content
+            say(f"   ✅ {p} finished.\n")
+        except GenerationError as e:
+            failures.append({"platform": p, "error": str(e)})
+            content_dict[p] = f"❌ {p} generation failed: {e}"
+            say(f"   ❌ {p} failed: {e}\n")
 
-    filepath = save_content(content_dict, topic, brand)
+    filepath = None
+    if not args.no_save:
+        filepath = save_content(content_dict, topic, brand)
 
-    print("="*60)
-    print("🎉 CONTENT GENERATION COMPLETE!")
-    print(f"📁 Saved file: {filepath}")
-    print("="*60)
+    payload = {
+        "ok": bool(content_dict) and len(failures) < len(platforms),
+        "provider": provider,
+        "provider_name": cfg["name"],
+        "model": args.model or cfg.get("default_model"),
+        "brand": brand,
+        "topic": topic,
+        "tone": tone,
+        "platforms": platforms,
+        "content": content_dict,
+        "failures": failures,
+        "saved_file": filepath,
+    }
 
-    # Preview first platform
-    if platforms and platforms[0] in content_dict:
-        print(f"\n--- PREVIEW: {platforms[0].upper()} ---\n")
-        print(content_dict[platforms[0]][:400] + "...\n")
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        say("="*60)
+        say("🎉 CONTENT GENERATION COMPLETE!" if not failures else "⚠️  COMPLETED WITH FAILURES")
+        if filepath:
+            say(f"📁 Saved file: {filepath}")
+        for f in failures:
+            say(f"   ❌ {f['platform']}: {f['error']}")
+        say("="*60)
+
+        if platforms and platforms[0] in content_dict:
+            say(f"\n--- PREVIEW: {platforms[0].upper()} ---\n")
+            say(content_dict[platforms[0]][:400] + "...\n")
+
+    # Non-zero exit when nothing was produced, so cron jobs and the relay can
+    # tell "generated" from "silently wrote an error message into a file".
+    return 1 if failures and len(failures) == len(platforms) else 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
