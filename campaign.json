@@ -1,0 +1,11 @@
+{
+    "brand_name": "My Brand",
+    "daily_topic": "5 ways AI is transforming digital marketing in 2025",
+    "tone": "professional",
+    "platforms": ["instagram", "facebook", "youtube"],
+    "active": true,
+    "campaign_name": "AI & Marketing Series",
+    "target_audience": "Small business owners aged 25-45 interested in digital tools",
+    "cta": "Follow for daily marketing tips",
+    "hashtag_niche": "digitalmarketing, aitools, contentcreator"
+}

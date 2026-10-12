@@ -1,0 +1,1378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Nexus — AI-Powered Digital Marketing Command Center for social media, content creation, and campaign automation.">
+    <title>Nexus — Marketing Command Center</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
+</head>
+<body>
+    <!-- Ambient background orbs -->
+    <div class="ambient-bg">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+    </div>
+
+    <div class="app-shell">
+        <!-- ══════════════ SIDEBAR ══════════════ -->
+        <nav class="sidebar" id="sidebar">
+            <div class="sidebar-logo">
+                <div class="logo-icon"><i class="ph-fill ph-planet"></i></div>
+                <div class="logo-text">Nexus</div>
+                <button class="sidebar-toggle" id="sidebarToggle"><i class="ph ph-caret-left"></i></button>
+            </div>
+
+            <div class="nav-section-label">WORKSPACE</div>
+            <ul class="nav-list">
+                <li class="nav-item active" data-page="dashboard">
+                    <a href="#" class="nav-link"><i class="ph ph-squares-four"></i><span>Dashboard</span></a>
+                </li>
+                <li class="nav-item" data-page="agent">
+                    <a href="#" class="nav-link"><i class="ph ph-robot"></i><span>AI Agent</span><div class="nav-badge">AI</div></a>
+                </li>
+                <li class="nav-item" data-page="create">
+                    <a href="#" class="nav-link"><i class="ph ph-pen-nib"></i><span>Create Content</span></a>
+                </li>
+                <li class="nav-item" data-page="calendar">
+                    <a href="#" class="nav-link"><i class="ph ph-calendar-blank"></i><span>Content Calendar</span></a>
+                </li>
+            </ul>
+
+            <div class="nav-section-label">CHANNELS</div>
+            <ul class="nav-list">
+                <li class="nav-item" data-page="instagram">
+                    <a href="#" class="nav-link"><i class="ph-fill ph-instagram-logo" style="background: var(--ig-grad); -webkit-background-clip:text; -webkit-text-fill-color:transparent;"></i><span>Instagram</span></a>
+                </li>
+                <li class="nav-item" data-page="facebook">
+                    <a href="#" class="nav-link"><i class="ph-fill ph-facebook-logo" style="color:#1877f2"></i><span>Facebook</span></a>
+                </li>
+                <li class="nav-item" data-page="youtube">
+                    <a href="#" class="nav-link"><i class="ph-fill ph-youtube-logo" style="color:#ff0000"></i><span>YouTube</span></a>
+                </li>
+                <li class="nav-item" data-page="linkedin">
+                    <a href="#" class="nav-link"><i class="ph-fill ph-linkedin-logo" style="color:#0a66c2"></i><span>LinkedIn</span></a>
+                </li>
+                <li class="nav-item" data-page="blog">
+                    <a href="#" class="nav-link"><i class="ph ph-article"></i><span>Blog & SEO</span></a>
+                </li>
+            </ul>
+
+            <div class="nav-section-label">TOOLS</div>
+            <ul class="nav-list">
+                <li class="nav-item" data-page="accounts">
+                    <a href="#" class="nav-link"><i class="ph ph-plugs-connected"></i><span>Connected Accounts</span></a>
+                </li>
+                <li class="nav-item" data-page="canva">
+                    <a href="#" class="nav-link"><i class="ph ph-paint-brush-broad"></i><span>Canva Studio</span><div class="nav-badge" style="background:linear-gradient(135deg,#7d2ae8,#00c4cc)">NEW</div></a>
+                </li>
+                <li class="nav-item" data-page="trends">
+                    <a href="#" class="nav-link"><i class="ph ph-trend-up"></i><span>Trending Now</span></a>
+                </li>
+                <li class="nav-item" data-page="hashtags">
+                    <a href="#" class="nav-link"><i class="ph ph-hash"></i><span>Hashtag Tool</span></a>
+                </li>
+                <li class="nav-item" data-page="analytics">
+                    <a href="#" class="nav-link"><i class="ph ph-chart-line-up"></i><span>Analytics</span></a>
+                </li>
+                <li class="nav-item" data-page="settings">
+                    <a href="#" class="nav-link"><i class="ph ph-sliders-horizontal"></i><span>Settings</span></a>
+                </li>
+            </ul>
+
+            <div class="sidebar-footer">
+                <div class="agent-status-pill" id="agentStatusPill">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Agent: Ready</span>
+                </div>
+            </div>
+        </nav>
+
+        <!-- ══════════════ MAIN ══════════════ -->
+        <main class="main-area">
+            <!-- Top Header -->
+            <header class="top-bar">
+                <div class="topbar-left">
+                    <h1 class="page-heading" id="pageHeading">Dashboard</h1>
+                </div>
+                <div class="topbar-right">
+                    <div class="topbar-model-selector glass-card">
+                        <i class="ph ph-cpu"></i>
+                        <select id="modelSelect">
+                            <option value="antigravity">Google Antigravity (Agentic)</option>
+                            <option value="cloud">Cloud API (Gemini/Groq/Claude)</option>
+                            <option value="local">Local AI (LM Studio/Ollama)</option>
+                        </select>
+                    </div>
+                    <button class="icon-btn glass-card" id="notifBtn">
+                        <i class="ph ph-bell"></i>
+                        <span class="notif-dot"></span>
+                    </button>
+                    <div class="avatar-chip glass-card">
+                        <img src="https://ui-avatars.com/api/?name=Marketer&background=7c3aed&color=fff&size=32" alt="Profile">
+                        <span>Marketer</span>
+                    </div>
+                </div>
+            </header>
+
+            <!-- ═══ PAGE: DASHBOARD ═══ -->
+            <div class="page-content active" id="page-dashboard">
+                <div class="greeting-banner glass-card fade-up">
+                    <div class="greeting-text">
+                        <h2 id="greetingText">Good Morning! 🚀</h2>
+                        <p>Your AI marketing agent is ready. Here's today's overview.</p>
+                    </div>
+                    <div class="quick-actions">
+                        <button class="qbtn qbtn-primary" onclick="switchPage('agent')"><i class="ph-fill ph-robot"></i> Instruct Agent</button>
+                        <button class="qbtn qbtn-secondary" onclick="switchPage('create')"><i class="ph ph-pen-nib"></i> Create Content</button>
+                    </div>
+                </div>
+
+                <!-- KPI Cards -->
+                <div class="kpi-grid fade-up" style="animation-delay:.08s">
+                    <div class="kpi-card glass-card kpi-purple">
+                        <div class="kpi-icon"><i class="ph ph-users-three"></i></div>
+                        <div class="kpi-data">
+                            <div class="kpi-val" data-count="124500">0</div>
+                            <div class="kpi-label">Total Reach</div>
+                        </div>
+                        <div class="kpi-trend up"><i class="ph ph-arrow-up-right"></i>+12.5%</div>
+                    </div>
+                    <div class="kpi-card glass-card kpi-pink">
+                        <div class="kpi-icon"><i class="ph ph-heart"></i></div>
+                        <div class="kpi-data">
+                            <div class="kpi-val">8.2%</div>
+                            <div class="kpi-label">Avg. Engagement</div>
+                        </div>
+                        <div class="kpi-trend up"><i class="ph ph-arrow-up-right"></i>+1.2%</div>
+                    </div>
+                    <div class="kpi-card glass-card kpi-blue">
+                        <div class="kpi-icon"><i class="ph ph-paper-plane-tilt"></i></div>
+                        <div class="kpi-data">
+                            <div class="kpi-val" data-count="47">0</div>
+                            <div class="kpi-label">Posts This Month</div>
+                        </div>
+                        <div class="kpi-trend up"><i class="ph ph-arrow-up-right"></i>+8</div>
+                    </div>
+                    <div class="kpi-card glass-card kpi-orange">
+                        <div class="kpi-icon"><i class="ph ph-rocket-launch"></i></div>
+                        <div class="kpi-data">
+                            <div class="kpi-val" data-count="3">0</div>
+                            <div class="kpi-label">Active Campaigns</div>
+                        </div>
+                        <div class="kpi-trend neutral"><i class="ph ph-minus"></i>Steady</div>
+                    </div>
+                </div>
+
+                <!-- Platform Performance + Upcoming Posts -->
+                <div class="dash-lower fade-up" style="animation-delay:.16s">
+                    <!-- Platform Bars -->
+                    <div class="glass-card platform-perf-card">
+                        <div class="card-header">
+                            <h3>Platform Performance</h3>
+                            <span class="chip">This Month</span>
+                        </div>
+                        <div class="platform-bars">
+                            <div class="pbar-row">
+                                <div class="pbar-label"><i class="ph-fill ph-instagram-logo ig-color"></i> Instagram</div>
+                                <div class="pbar-track"><div class="pbar-fill" style="width:78%;background:var(--ig-grad)"></div></div>
+                                <div class="pbar-val">78%</div>
+                            </div>
+                            <div class="pbar-row">
+                                <div class="pbar-label"><i class="ph-fill ph-facebook-logo" style="color:#1877f2"></i> Facebook</div>
+                                <div class="pbar-track"><div class="pbar-fill" style="width:52%;background:linear-gradient(90deg,#1877f2,#0d65d9)"></div></div>
+                                <div class="pbar-val">52%</div>
+                            </div>
+                            <div class="pbar-row">
+                                <div class="pbar-label"><i class="ph-fill ph-youtube-logo" style="color:#ff0000"></i> YouTube</div>
+                                <div class="pbar-track"><div class="pbar-fill" style="width:65%;background:linear-gradient(90deg,#ff0000,#cc0000)"></div></div>
+                                <div class="pbar-val">65%</div>
+                            </div>
+                            <div class="pbar-row">
+                                <div class="pbar-label"><i class="ph-fill ph-linkedin-logo" style="color:#0a66c2"></i> LinkedIn</div>
+                                <div class="pbar-track"><div class="pbar-fill" style="width:41%;background:linear-gradient(90deg,#0a66c2,#004182)"></div></div>
+                                <div class="pbar-val">41%</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Upcoming Posts -->
+                    <div class="glass-card upcoming-card">
+                        <div class="card-header">
+                            <h3>Upcoming Posts</h3>
+                            <a href="#" class="chip chip-link" onclick="switchPage('calendar');return false;">View All</a>
+                        </div>
+                        <div class="post-schedule-list" id="upcomingPostsList">
+                            <!-- Filled by JS -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ PAGE: AI AGENT ═══ -->
+            <div class="page-content" id="page-agent">
+                <div class="agent-layout fade-up">
+                    <!-- Instructions Panel -->
+                    <div class="glass-card agent-input-card">
+                        <div class="card-header">
+                            <h3><i class="ph-fill ph-robot"></i> Daily Directive</h3>
+                            <div class="chip" id="agentReadyChip">🟢 Ready</div>
+                        </div>
+                        <p class="helper-text">Describe today's campaign, product, or goal. The agent will handle strategy, copy, hashtags, and visual direction for all selected platforms.</p>
+
+                        <form id="agentForm">
+                            <div class="form-field">
+                                <label>Your Instruction</label>
+                                <textarea id="agentInstruction" rows="5" placeholder="e.g., 'Create a 5-day campaign for our new AI writing tool. Target early-stage founders. Tone: inspiring and data-driven. Start with a teaser post.'"></textarea>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>Brand Name</label>
+                                    <input type="text" id="brandName" placeholder="My Brand" value="My Brand">
+                                </div>
+                                <div class="form-field">
+                                    <label>Tone of Voice</label>
+                                    <select id="toneSelect">
+                                        <option value="professional">Professional</option>
+                                        <option value="casual">Casual & Friendly</option>
+                                        <option value="inspirational">Inspirational</option>
+                                        <option value="educational">Educational</option>
+                                        <option value="humorous">Humorous</option>
+                                        <option value="urgent">Urgent / Sales</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="form-field">
+                                <label>Target Platforms</label>
+                                <div class="platform-pills">
+                                    <label class="ppill ppill-ig"><input type="checkbox" value="instagram" checked><span><i class="ph-fill ph-instagram-logo"></i> Instagram</span></label>
+                                    <label class="ppill ppill-fb"><input type="checkbox" value="facebook" checked><span><i class="ph-fill ph-facebook-logo"></i> Facebook</span></label>
+                                    <label class="ppill ppill-yt"><input type="checkbox" value="youtube"><span><i class="ph-fill ph-youtube-logo"></i> YouTube</span></label>
+                                    <label class="ppill ppill-li"><input type="checkbox" value="linkedin"><span><i class="ph-fill ph-linkedin-logo"></i> LinkedIn</span></label>
+                                    <label class="ppill ppill-tw"><input type="checkbox" value="twitter"><span><i class="ph-fill ph-twitter-logo"></i> Twitter/X</span></label>
+                                    <label class="ppill ppill-blog"><input type="checkbox" value="blog"><span><i class="ph ph-article"></i> Blog</span></label>
+                                </div>
+                            </div>
+
+                            <div class="form-field">
+                                <label>Content Type</label>
+                                <div class="content-type-grid">
+                                    <label class="ctype-chip"><input type="radio" name="contentType" value="daily" checked><span><i class="ph ph-sun"></i> Daily Post</span></label>
+                                    <label class="ctype-chip"><input type="radio" name="contentType" value="campaign"><span><i class="ph ph-rocket-launch"></i> Full Campaign</span></label>
+                                    <label class="ctype-chip"><input type="radio" name="contentType" value="reel"><span><i class="ph ph-film-reel"></i> Reel / Short</span></label>
+                                    <label class="ctype-chip"><input type="radio" name="contentType" value="blog"><span><i class="ph ph-article"></i> Blog Post</span></label>
+                                    <label class="ctype-chip"><input type="radio" name="contentType" value="email"><span><i class="ph ph-envelope"></i> Email</span></label>
+                                    <label class="ctype-chip"><input type="radio" name="contentType" value="ads"><span><i class="ph ph-currency-dollar"></i> Ad Copy</span></label>
+                                </div>
+                            </div>
+
+                            <div class="form-field">
+                                <label>Additional Context (Optional)</label>
+                                <textarea id="agentContext" rows="2" placeholder="Target audience, key features, competitors, special offers, brand colors, etc."></textarea>
+                            </div>
+
+                            <div class="form-actions-row">
+                                <button type="button" class="btn btn-ghost" id="saveDraftBtn"><i class="ph ph-floppy-disk"></i> Save Draft</button>
+                                <button type="submit" class="btn btn-primary" id="dispatchBtn">
+                                    <i class="ph-fill ph-paper-plane-tilt"></i> Generate Content
+                                </button>
+                            </div>
+                        </form>
+
+                        <div class="agent-feedback hidden" id="agentFeedback">
+                            <div class="spinner-ring"></div>
+                            <span id="agentFeedbackText">Agent is analyzing your request...</span>
+                        </div>
+                        <div class="success-toast hidden" id="successToast">
+                            <i class="ph-fill ph-check-circle"></i> Content generated! Check your output below.
+                        </div>
+                    </div>
+
+                    <!-- Output Panel -->
+                    <div class="glass-card agent-output-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-scroll"></i> Generated Content</h3>
+                            <div class="output-actions">
+                                <button class="btn btn-ghost btn-sm" id="copyOutputBtn" onclick="copyOutput()"><i class="ph ph-copy"></i> Copy All</button>
+                                <button class="btn btn-ghost btn-sm" id="clearOutputBtn" onclick="clearOutput()"><i class="ph ph-trash"></i> Clear</button>
+                            </div>
+                        </div>
+                        <div class="output-empty" id="outputEmpty">
+                            <i class="ph ph-sparkle"></i>
+                            <p>Generated content will appear here.</p>
+                            <p class="output-empty-sub">Fill in the form and click "Generate Content" to start.</p>
+                        </div>
+                        <div class="output-tabs hidden" id="outputTabs">
+                            <div class="tabs-row" id="tabsRow"></div>
+                            <div class="tab-content" id="tabContent"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Templates -->
+                <div class="glass-card quick-templates-card fade-up" style="animation-delay:.1s">
+                    <div class="card-header">
+                        <h3><i class="ph ph-lightning"></i> Quick Templates</h3>
+                        <span class="helper-text">Click to auto-fill the form</span>
+                    </div>
+                    <div class="templates-grid" id="templatesGrid">
+                        <!-- Filled by JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ PAGE: CREATE CONTENT ═══ -->
+            <div class="page-content" id="page-create">
+                <div class="create-layout fade-up">
+                    <div class="glass-card create-studio">
+                        <div class="card-header">
+                            <h3><i class="ph ph-pen-nib"></i> Content Studio</h3>
+                        </div>
+                        <div class="studio-tabs">
+                            <button class="studio-tab active" data-studio="caption">Caption Writer</button>
+                            <button class="studio-tab" data-studio="hashtags">Hashtag Generator</button>
+                            <button class="studio-tab" data-studio="hook">Hook Builder</button>
+                            <button class="studio-tab" data-studio="email">Email Writer</button>
+                            <button class="studio-tab" data-studio="seo">SEO Brief</button>
+                            <button class="studio-tab" data-studio="abtesting">A/B Variants</button>
+                        </div>
+
+                        <!-- Caption Writer -->
+                        <div class="studio-panel active" id="studio-caption">
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>Platform</label>
+                                    <select id="captionPlatform">
+                                        <option>Instagram</option>
+                                        <option>Facebook</option>
+                                        <option>LinkedIn</option>
+                                        <option>Twitter/X</option>
+                                        <option>TikTok</option>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>Formula</label>
+                                    <select id="captionFormula">
+                                        <option>AIDA (Attention → Interest → Desire → Action)</option>
+                                        <option>PAS (Problem → Agitate → Solution)</option>
+                                        <option>HOOK → VALUE → CTA</option>
+                                        <option>STAR (Situation → Task → Action → Result)</option>
+                                        <option>Storytelling</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-field">
+                                <label>Topic / Product / Message</label>
+                                <textarea rows="3" id="captionTopic" placeholder="e.g., Launching a new feature that saves 3 hours of work per day for remote teams"></textarea>
+                            </div>
+                            <button class="btn btn-primary" id="genCaptionBtn"><i class="ph-fill ph-magic-wand"></i> Generate Caption</button>
+                            <div class="studio-output" id="captionOutput"></div>
+                        </div>
+
+                        <!-- Hashtag Generator -->
+                        <div class="studio-panel" id="studio-hashtags">
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>Topic / Niche</label>
+                                    <input type="text" id="hashtagTopic" placeholder="e.g., sustainable fashion, AI startups, home fitness">
+                                </div>
+                                <div class="form-field">
+                                    <label>Platform</label>
+                                    <select id="hashtagPlatform">
+                                        <option>Instagram</option>
+                                        <option>TikTok</option>
+                                        <option>LinkedIn</option>
+                                        <option>Twitter/X</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <button class="btn btn-primary" id="genHashtagBtn"><i class="ph ph-hash"></i> Generate Hashtag Set</button>
+                            <div class="studio-output hashtag-output-grid" id="hashtagOutput"></div>
+                        </div>
+
+                        <!-- Hook Builder -->
+                        <div class="studio-panel" id="studio-hook">
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>Platform</label>
+                                    <select id="hookPlatform">
+                                        <option>Instagram Reel</option>
+                                        <option>TikTok</option>
+                                        <option>YouTube Shorts</option>
+                                        <option>Twitter Thread</option>
+                                        <option>LinkedIn Post</option>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>Hook Type</label>
+                                    <select id="hookType">
+                                        <option>Curiosity Gap</option>
+                                        <option>Controversy / Hot Take</option>
+                                        <option>Story / Personal</option>
+                                        <option>Number / List</option>
+                                        <option>Question</option>
+                                        <option>Warning / Mistake</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-field">
+                                <label>Topic</label>
+                                <input type="text" id="hookTopic" placeholder="e.g., time management for entrepreneurs">
+                            </div>
+                            <button class="btn btn-primary" id="genHookBtn"><i class="ph ph-fish-simple"></i> Generate 5 Hooks</button>
+                            <div class="studio-output" id="hookOutput"></div>
+                        </div>
+
+                        <!-- Email Writer -->
+                        <div class="studio-panel" id="studio-email">
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>Email Type</label>
+                                    <select id="emailType">
+                                        <option>Newsletter</option>
+                                        <option>Product Launch</option>
+                                        <option>Promotional Offer</option>
+                                        <option>Welcome Email</option>
+                                        <option>Re-engagement</option>
+                                        <option>Event Invitation</option>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>Target Audience</label>
+                                    <input type="text" id="emailAudience" placeholder="e.g., SaaS founders, lifestyle bloggers">
+                                </div>
+                            </div>
+                            <div class="form-field">
+                                <label>Key Message / Offer</label>
+                                <textarea rows="2" id="emailMessage" placeholder="e.g., 40% off annual plan, ends Sunday"></textarea>
+                            </div>
+                            <button class="btn btn-primary" id="genEmailBtn"><i class="ph ph-envelope"></i> Generate Email + Subject Lines</button>
+                            <div class="studio-output" id="emailOutput"></div>
+                        </div>
+
+                        <!-- SEO Brief -->
+                        <div class="studio-panel" id="studio-seo">
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>Primary Keyword</label>
+                                    <input type="text" id="seoPrimaryKw" placeholder="e.g., best AI marketing tools">
+                                </div>
+                                <div class="form-field">
+                                    <label>Target Word Count</label>
+                                    <select id="seoWordCount">
+                                        <option value="750">Short-form (750 words)</option>
+                                        <option value="1500" selected>Standard (1500 words)</option>
+                                        <option value="2500">Long-form (2500 words)</option>
+                                        <option value="4000">Pillar (4000+ words)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <button class="btn btn-primary" id="genSEOBtn"><i class="ph ph-magnifying-glass"></i> Generate SEO Brief</button>
+                            <div class="studio-output" id="seoOutput"></div>
+                        </div>
+
+                        <!-- A/B Testing -->
+                        <div class="studio-panel" id="studio-abtesting">
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>Content Type</label>
+                                    <select id="abType">
+                                        <option>Post Caption</option>
+                                        <option>Email Subject Line</option>
+                                        <option>Ad Headline</option>
+                                        <option>YouTube Title</option>
+                                        <option>CTA Button Text</option>
+                                    </select>
+                                </div>
+                                <div class="form-field">
+                                    <label>Topic / Goal</label>
+                                    <input type="text" id="abTopic" placeholder="e.g., drive sign-ups for free trial">
+                                </div>
+                            </div>
+                            <button class="btn btn-primary" id="genABBtn"><i class="ph ph-git-branch"></i> Generate A/B Variants</button>
+                            <div class="studio-output ab-output" id="abOutput"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ PAGE: CALENDAR ═══ -->
+            <div class="page-content" id="page-calendar">
+                <div class="glass-card calendar-card fade-up">
+                    <div class="card-header">
+                        <h3><i class="ph ph-calendar-blank"></i> Content Calendar</h3>
+                        <div class="calendar-nav">
+                            <button class="btn btn-ghost btn-sm" id="prevMonth"><i class="ph ph-caret-left"></i></button>
+                            <span id="calMonthLabel" class="calendar-month-label">October 2026</span>
+                            <button class="btn btn-ghost btn-sm" id="nextMonth"><i class="ph ph-caret-right"></i></button>
+                        </div>
+                        <button class="btn btn-primary btn-sm" id="addEventBtn"><i class="ph ph-plus"></i> Add Post</button>
+                    </div>
+                    <div class="calendar-grid" id="calendarGrid"></div>
+                </div>
+
+                <!-- Add Event Modal -->
+                <div class="modal-overlay hidden" id="addEventModal">
+                    <div class="modal-card glass-card">
+                        <div class="modal-header">
+                            <h3>Schedule a Post</h3>
+                            <button class="icon-btn" onclick="closeModal()"><i class="ph ph-x"></i></button>
+                        </div>
+                        <div class="form-field">
+                            <label>Post Title</label>
+                            <input type="text" id="eventTitle" placeholder="e.g., Product Launch Teaser">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-field">
+                                <label>Date</label>
+                                <input type="date" id="eventDate">
+                            </div>
+                            <div class="form-field">
+                                <label>Time</label>
+                                <input type="time" id="eventTime" value="09:00">
+                            </div>
+                        </div>
+                        <div class="form-field">
+                            <label>Platform</label>
+                            <select id="eventPlatform">
+                                <option value="instagram">Instagram</option>
+                                <option value="facebook">Facebook</option>
+                                <option value="youtube">YouTube</option>
+                                <option value="linkedin">LinkedIn</option>
+                                <option value="twitter">Twitter/X</option>
+                                <option value="blog">Blog</option>
+                            </select>
+                        </div>
+                        <div class="form-field">
+                            <label>Status</label>
+                            <select id="eventStatus">
+                                <option value="planning">Planning</option>
+                                <option value="draft">Draft</option>
+                                <option value="scheduled">Scheduled</option>
+                            </select>
+                        </div>
+                        <div class="modal-actions">
+                            <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+                            <button class="btn btn-primary" id="saveEventBtn">Save Post</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ PAGE: ANALYTICS ═══ -->
+            <div class="page-content" id="page-analytics">
+                <div class="analytics-layout fade-up">
+                    <div class="glass-card analytics-summary">
+                        <div class="card-header">
+                            <h3><i class="ph ph-chart-line-up"></i> Monthly Performance Report</h3>
+                            <span class="chip">October 2026</span>
+                        </div>
+                        <div class="analytics-kpis">
+                            <div class="akpi"><div class="akpi-val">124.5K</div><div class="akpi-label">Total Reach</div></div>
+                            <div class="akpi"><div class="akpi-val">8.2%</div><div class="akpi-label">Avg. Engagement Rate</div></div>
+                            <div class="akpi"><div class="akpi-val">3,420</div><div class="akpi-label">Profile Visits</div></div>
+                            <div class="akpi"><div class="akpi-val">1,205</div><div class="akpi-label">New Followers</div></div>
+                            <div class="akpi"><div class="akpi-val">47</div><div class="akpi-label">Posts Published</div></div>
+                            <div class="akpi"><div class="akpi-val">$1.24</div><div class="akpi-label">Avg. CPM</div></div>
+                        </div>
+                    </div>
+                    <div class="glass-card top-posts-card">
+                        <div class="card-header">
+                            <h3>Top Performing Posts</h3>
+                        </div>
+                        <div class="top-posts-list" id="topPostsList">
+                            <!-- Filled by JS -->
+                        </div>
+                    </div>
+                    <div class="glass-card recommendations-card">
+                        <div class="card-header"><h3><i class="ph ph-lightbulb"></i> AI Recommendations</h3></div>
+                        <ul class="rec-list" id="recList">
+                            <!-- Filled by JS -->
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ PAGE: SETTINGS ═══ -->
+            <div class="page-content" id="page-settings">
+                <div class="settings-layout fade-up">
+                    <div class="glass-card settings-card">
+                        <div class="card-header"><h3><i class="ph ph-sliders-horizontal"></i> Agent Configuration</h3></div>
+
+                        <div class="settings-section">
+                            <h4>Brand Identity</h4>
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>Brand Name</label>
+                                    <input type="text" id="settingsBrand" placeholder="My Brand">
+                                </div>
+                                <div class="form-field">
+                                    <label>Niche / Industry</label>
+                                    <input type="text" id="settingsNiche" placeholder="e.g., SaaS, Fashion, Food & Beverage">
+                                </div>
+                            </div>
+                            <div class="form-field">
+                                <label>Target Audience</label>
+                                <input type="text" id="settingsAudience" placeholder="e.g., Small business owners aged 25-40 in the US">
+                            </div>
+                            <div class="form-field">
+                                <label>Brand Tone</label>
+                                <div class="tone-pills">
+                                    <label class="tone-pill"><input type="radio" name="brandTone" value="professional" checked><span>Professional</span></label>
+                                    <label class="tone-pill"><input type="radio" name="brandTone" value="casual"><span>Casual</span></label>
+                                    <label class="tone-pill"><input type="radio" name="brandTone" value="bold"><span>Bold</span></label>
+                                    <label class="tone-pill"><input type="radio" name="brandTone" value="playful"><span>Playful</span></label>
+                                    <label class="tone-pill"><input type="radio" name="brandTone" value="educational"><span>Educational</span></label>
+                                    <label class="tone-pill"><input type="radio" name="brandTone" value="inspirational"><span>Inspirational</span></label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-section">
+                            <h4>AI Model</h4>
+                            <div class="model-options">
+                                <label class="model-option">
+                                    <input type="radio" name="aiModel" value="antigravity" checked>
+                                    <div class="model-card">
+                                        <div class="model-icon"><i class="ph-fill ph-magic-wand"></i></div>
+                                        <div><div class="model-name">Google Antigravity</div><div class="model-desc">Runs natively as an Agentic AI. Highly recommended.</div></div>
+                                    </div>
+                                </label>
+                                <label class="model-option">
+                                    <input type="radio" name="aiModel" value="cloud">
+                                    <div class="model-card">
+                                        <div class="model-icon"><i class="ph-fill ph-cloud"></i></div>
+                                        <div><div class="model-name">Cloud APIs</div><div class="model-desc">Connect Gemini, Groq, Deepseek, Qwen, Claude, etc.</div></div>
+                                    </div>
+                                </label>
+                                <label class="model-option">
+                                    <input type="radio" name="aiModel" value="local">
+                                    <div class="model-card">
+                                        <div class="model-icon"><i class="ph ph-desktop"></i></div>
+                                        <div><div class="model-name">Local Models</div><div class="model-desc">LM Studio, Ollama. Runs locally, privacy-first.</div></div>
+                                    </div>
+                                </label>
+                            </div>
+                            <div id="cloudSettings" style="display:none; margin-top: 15px; padding: 15px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                                <div class="form-row">
+                                    <div class="form-field">
+                                        <label>Provider</label>
+                                        <select id="cloudProvider">
+                                            <option value="gemini">Google Gemini</option>
+                                            <option value="groq">Groq</option>
+                                            <option value="claude">Anthropic Claude</option>
+                                            <option value="deepseek">Deepseek</option>
+                                            <option value="qwen">Qwen</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>API Key</label>
+                                        <input type="password" id="cloudApiKey" placeholder="sk-...">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-field" id="localSettings" style="display:none; margin-top: 15px; padding: 15px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                                <label>Local API Base URL</label>
+                                <input type="text" id="localModelUrl" value="http://localhost:1234/v1" placeholder="http://localhost:1234/v1 or http://localhost:11434/v1">
+                            </div>
+                        </div>
+
+                        <div class="settings-section">
+                            <h4>Automation Schedule</h4>
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>Daily Post Time</label>
+                                    <input type="time" id="autoPostTime" value="09:00">
+                                </div>
+                                <div class="form-field">
+                                    <label>Automation Mode</label>
+                                    <select id="autoMode">
+                                        <option value="off">Off</option>
+                                        <option value="draft">Generate Drafts Only</option>
+                                        <option value="full">Full Auto (Generate + Save)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="schedule-code-block">
+                                <div class="code-header"><span>Antigravity Schedule Command</span><button onclick="copyScheduleCmd()" class="btn btn-ghost btn-sm"><i class="ph ph-copy"></i></button></div>
+                                <code id="scheduleCmd">/schedule CronExpression="0 9 * * *" Prompt="Activate digital-marketer skill. Generate today's posts using campaign.json settings."</code>
+                            </div>
+                        </div>
+
+                        <button class="btn btn-primary" id="saveSettingsBtn"><i class="ph ph-floppy-disk"></i> Save Settings</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ PAGE: HASHTAGS ═══ -->
+            <div class="page-content" id="page-hashtags">
+                <div class="glass-card hashtag-tool-card fade-up">
+                    <div class="card-header"><h3><i class="ph ph-hash"></i> Hashtag Research Tool</h3></div>
+                    <div class="form-row">
+                        <div class="form-field" style="flex:2">
+                            <label>Niche / Topic</label>
+                            <input type="text" id="htTopic" placeholder="e.g., sustainable fashion, crypto, fitness coaching">
+                        </div>
+                        <div class="form-field">
+                            <label>Platform</label>
+                            <select id="htPlatform">
+                                <option>Instagram</option>
+                                <option>TikTok</option>
+                                <option>LinkedIn</option>
+                                <option>Twitter/X</option>
+                            </select>
+                        </div>
+                        <div class="form-field">
+                            <label>Count</label>
+                            <select id="htCount">
+                                <option value="10">10</option>
+                                <option value="20" selected>20</option>
+                                <option value="30">30</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" id="htGenBtn"><i class="ph ph-magnifying-glass"></i> Research Hashtags</button>
+                    <div class="hashtag-results" id="hashtagResults"></div>
+                </div>
+            </div>
+
+            <!-- ═══ PAGE: TRENDS ═══ -->
+            <div class="page-content" id="page-trends">
+                <div class="trends-layout fade-up">
+                    <div class="glass-card trends-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-trend-up"></i> Trending Now <span class="live-pulse"></span></h3>
+                            <button class="btn btn-ghost btn-sm" id="refreshTrendsBtn"><i class="ph ph-arrows-clockwise"></i> Refresh</button>
+                        </div>
+                        <p class="helper-text">Real-time pulse of viral topics, audio, and hashtags across platforms.</p>
+                        
+                        <div class="trends-grid">
+                            <div class="trend-col">
+                                <div class="trend-col-header"><i class="ph-fill ph-fire"></i> Viral Topics</div>
+                                <div class="trend-list" id="viralTopicsList">
+                                    <div class="trend-skeleton"></div>
+                                    <div class="trend-skeleton"></div>
+                                    <div class="trend-skeleton"></div>
+                                </div>
+                            </div>
+                            <div class="trend-col">
+                                <div class="trend-col-header"><i class="ph-fill ph-music-notes"></i> Trending Audio (Reels/TikTok)</div>
+                                <div class="trend-list" id="viralAudioList">
+                                    <div class="trend-skeleton"></div>
+                                    <div class="trend-skeleton"></div>
+                                    <div class="trend-skeleton"></div>
+                                </div>
+                            </div>
+                            <div class="trend-col">
+                                <div class="trend-col-header"><i class="ph-fill ph-hash"></i> Top Hashtags</div>
+                                <div class="trend-list" id="viralHashtagsList">
+                                    <div class="trend-skeleton"></div>
+                                    <div class="trend-skeleton"></div>
+                                    <div class="trend-skeleton"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ FUNCTIONAL HUBS ═══ -->
+            <div class="page-content" id="page-instagram">
+                <div class="hub-layout fade-up">
+                    <div class="glass-card hub-card">
+                        <div class="card-header">
+                            <h3><i class="ph-fill ph-instagram-logo" style="background:var(--ig-grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent;"></i> Instagram Hub</h3>
+                        </div>
+                        <div class="hub-tools">
+                            <div class="hub-tool">
+                                <h4>Carousel Builder</h4>
+                                <textarea id="igCarouselTopic" rows="2" placeholder="Topic for 5-slide carousel"></textarea>
+                                <button class="btn btn-primary btn-sm mt-2" onclick="generateHubContent('instagram', 'carousel')">Generate Carousel</button>
+                            </div>
+                            <div class="hub-tool">
+                                <h4>Reel Script Generator</h4>
+                                <textarea id="igReelTopic" rows="2" placeholder="Topic for 60s Reel"></textarea>
+                                <button class="btn btn-primary btn-sm mt-2" onclick="generateHubContent('instagram', 'reel')">Generate Reel Script</button>
+                            </div>
+                        </div>
+                        <div class="studio-output hub-output" id="igHubOutput"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="page-content" id="page-facebook">
+                <div class="hub-layout fade-up">
+                    <div class="glass-card hub-card">
+                        <div class="card-header">
+                            <h3><i class="ph-fill ph-facebook-logo" style="color:#1877f2;"></i> Facebook Hub</h3>
+                        </div>
+                        <div class="hub-tools">
+                            <div class="hub-tool">
+                                <h4>Group Engagement Post</h4>
+                                <textarea id="fbGroupTopic" rows="2" placeholder="Topic to spark discussion in a Facebook Group"></textarea>
+                                <button class="btn btn-primary btn-sm mt-2" onclick="generateHubContent('facebook', 'group')">Generate Discussion Post</button>
+                            </div>
+                            <div class="hub-tool">
+                                <h4>Ad Copy Preview</h4>
+                                <textarea id="fbAdTopic" rows="2" placeholder="Product/Offer for Meta Ads"></textarea>
+                                <button class="btn btn-primary btn-sm mt-2" onclick="generateHubContent('facebook', 'ad')">Generate Ad Copy</button>
+                            </div>
+                        </div>
+                        <div class="studio-output hub-output" id="fbHubOutput"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="page-content" id="page-youtube">
+                <div class="hub-layout fade-up">
+                    <div class="glass-card hub-card">
+                        <div class="card-header">
+                            <h3><i class="ph-fill ph-youtube-logo" style="color:#ff0000;"></i> YouTube Hub</h3>
+                        </div>
+                        <div class="hub-tools">
+                            <div class="hub-tool">
+                                <h4>Title Optimizer (A/B)</h4>
+                                <textarea id="ytTitleTopic" rows="2" placeholder="Main topic or working title of the video"></textarea>
+                                <button class="btn btn-primary btn-sm mt-2" onclick="generateHubContent('youtube', 'title')">Generate Titles</button>
+                            </div>
+                            <div class="hub-tool">
+                                <h4>Description & Tags Generator</h4>
+                                <textarea id="ytDescTopic" rows="2" placeholder="Video summary and key links to include"></textarea>
+                                <button class="btn btn-primary btn-sm mt-2" onclick="generateHubContent('youtube', 'desc')">Generate Description</button>
+                            </div>
+                        </div>
+                        <div class="studio-output hub-output" id="ytHubOutput"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="page-content" id="page-linkedin">
+                <div class="hub-layout fade-up">
+                    <div class="glass-card hub-card">
+                        <div class="card-header">
+                            <h3><i class="ph-fill ph-linkedin-logo" style="color:#0a66c2;"></i> LinkedIn Hub</h3>
+                        </div>
+                        <div class="hub-tools">
+                            <div class="hub-tool">
+                                <h4>Thought Leadership Post</h4>
+                                <textarea id="liThoughtTopic" rows="2" placeholder="Industry insight or controversial opinion"></textarea>
+                                <button class="btn btn-primary btn-sm mt-2" onclick="generateHubContent('linkedin', 'thought')">Generate Post</button>
+                            </div>
+                            <div class="hub-tool">
+                                <h4>Professional Poll Generator</h4>
+                                <textarea id="liPollTopic" rows="2" placeholder="Topic to survey your network about"></textarea>
+                                <button class="btn btn-primary btn-sm mt-2" onclick="generateHubContent('linkedin', 'poll')">Generate Poll</button>
+                            </div>
+                        </div>
+                        <div class="studio-output hub-output" id="liHubOutput"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="page-content" id="page-blog">
+                <div class="hub-layout fade-up">
+                    <div class="glass-card hub-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-article" style="color:#a78bfa;"></i> Blog & SEO Hub</h3>
+                        </div>
+                        <div class="hub-tools">
+                            <div class="hub-tool" style="flex: 1 1 100%;">
+                                <h4>Article Outliner</h4>
+                                <input type="text" id="blogPrimaryKw" placeholder="Primary Keyword" class="mb-2">
+                                <textarea id="blogTopic" rows="2" placeholder="What is the main premise of the article?"></textarea>
+                                <button class="btn btn-primary btn-sm mt-2" onclick="generateHubContent('blog', 'outline')">Generate Full Outline</button>
+                            </div>
+                        </div>
+                        <div class="studio-output hub-output" id="blogHubOutput"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ PAGE: CONNECTED ACCOUNTS ═══ -->
+            <div class="page-content" id="page-accounts">
+                <div class="accounts-layout fade-up">
+
+                    <!-- Intro Banner -->
+                    <div class="glass-card accounts-banner">
+                        <div class="banner-text">
+                            <h2><i class="ph ph-plugs-connected"></i> Social Media Account Manager</h2>
+                            <p>Connect your social media accounts using official API keys and tokens. All credentials are stored <strong>locally in your browser</strong> — never sent to any server.</p>
+                        </div>
+                        <div class="banner-actions">
+                            <button class="btn btn-primary" onclick="saveAllCredentials()"><i class="ph ph-floppy-disk"></i> Save All Credentials</button>
+                            <button class="btn btn-ghost" onclick="testAllConnections()"><i class="ph ph-plug"></i> Test All Connections</button>
+                        </div>
+                    </div>
+
+                    <!-- Platform Cards Grid -->
+                    <div class="platform-accounts-grid">
+
+                        <!-- INSTAGRAM / META -->
+                        <div class="platform-account-card glass-card" id="acc-instagram">
+                            <div class="pac-header">
+                                <div class="pac-icon" style="background:var(--ig-grad)"><i class="ph-fill ph-instagram-logo"></i></div>
+                                <div>
+                                    <div class="pac-name">Instagram / Meta</div>
+                                    <div class="pac-status" id="status-instagram"><span class="status-dot-sm"></span> Not Connected</div>
+                                </div>
+                                <button class="btn btn-ghost btn-sm" onclick="testConnection('instagram')"><i class="ph ph-plug"></i> Test</button>
+                            </div>
+                            <div class="pac-fields">
+                                <div class="form-field">
+                                    <label>App ID (Meta Developer)</label>
+                                    <input type="text" id="ig-app-id" placeholder="Your Meta App ID" autocomplete="off">
+                                </div>
+                                <div class="form-field">
+                                    <label>App Secret</label>
+                                    <input type="password" id="ig-app-secret" placeholder="Meta App Secret" autocomplete="new-password">
+                                </div>
+                                <div class="form-field">
+                                    <label>Long-Lived Access Token</label>
+                                    <input type="password" id="ig-access-token" placeholder="Paste your Access Token" autocomplete="new-password">
+                                </div>
+                                <div class="form-field">
+                                    <label>Instagram Business Account ID</label>
+                                    <input type="text" id="ig-account-id" placeholder="e.g. 17841400000000000">
+                                </div>
+                            </div>
+                            <div class="pac-guide">
+                                <details>
+                                    <summary><i class="ph ph-info"></i> How to get Instagram API credentials</summary>
+                                    <ol>
+                                        <li>Go to <strong>developers.facebook.com</strong> and create a Meta App</li>
+                                        <li>Add <strong>Instagram Graph API</strong> product to your app</li>
+                                        <li>Go to Tools → <strong>Graph API Explorer</strong></li>
+                                        <li>Generate a User Token with <code>instagram_basic, instagram_content_publish</code> permissions</li>
+                                        <li>Exchange for a Long-Lived Token (valid 60 days) using: <br><code>GET /oauth/access_token?grant_type=fb_exchange_token&client_id=APP_ID&client_secret=APP_SECRET&fb_exchange_token=SHORT_TOKEN</code></li>
+                                        <li>Get your Instagram Business Account ID from the Graph API Explorer: <code>/me/accounts</code></li>
+                                        <li><strong>Automation:</strong> Use the <code>/&lt;IG_ACCOUNT_ID&gt;/media</code> and <code>/&lt;IG_ACCOUNT_ID&gt;/media_publish</code> endpoints to post</li>
+                                    </ol>
+                                </details>
+                            </div>
+                        </div>
+
+                        <!-- FACEBOOK -->
+                        <div class="platform-account-card glass-card" id="acc-facebook">
+                            <div class="pac-header">
+                                <div class="pac-icon" style="background:linear-gradient(135deg,#1877f2,#0d65d9)"><i class="ph-fill ph-facebook-logo"></i></div>
+                                <div>
+                                    <div class="pac-name">Facebook Pages</div>
+                                    <div class="pac-status" id="status-facebook"><span class="status-dot-sm"></span> Not Connected</div>
+                                </div>
+                                <button class="btn btn-ghost btn-sm" onclick="testConnection('facebook')"><i class="ph ph-plug"></i> Test</button>
+                            </div>
+                            <div class="pac-fields">
+                                <div class="form-field">
+                                    <label>Page Access Token</label>
+                                    <input type="password" id="fb-page-token" placeholder="Facebook Page Access Token" autocomplete="new-password">
+                                </div>
+                                <div class="form-field">
+                                    <label>Page ID</label>
+                                    <input type="text" id="fb-page-id" placeholder="Your Facebook Page ID">
+                                </div>
+                            </div>
+                            <div class="pac-guide">
+                                <details>
+                                    <summary><i class="ph ph-info"></i> How to get Facebook Page API credentials</summary>
+                                    <ol>
+                                        <li>Go to <strong>developers.facebook.com</strong> → Your App → Graph API Explorer</li>
+                                        <li>Select your App, then click <strong>Generate Access Token</strong></li>
+                                        <li>Grant permissions: <code>pages_read_engagement, pages_manage_posts</code></li>
+                                        <li>Call <code>/me/accounts</code> to get your Page ID and Page Access Token</li>
+                                        <li><strong>Post automation:</strong> <code>POST /&lt;PAGE_ID&gt;/feed</code> with <code>message</code> and your <code>access_token</code></li>
+                                    </ol>
+                                </details>
+                            </div>
+                        </div>
+
+                        <!-- YOUTUBE -->
+                        <div class="platform-account-card glass-card" id="acc-youtube">
+                            <div class="pac-header">
+                                <div class="pac-icon" style="background:linear-gradient(135deg,#ff0000,#cc0000)"><i class="ph-fill ph-youtube-logo"></i></div>
+                                <div>
+                                    <div class="pac-name">YouTube / Google</div>
+                                    <div class="pac-status" id="status-youtube"><span class="status-dot-sm"></span> Not Connected</div>
+                                </div>
+                                <button class="btn btn-ghost btn-sm" onclick="testConnection('youtube')"><i class="ph ph-plug"></i> Test</button>
+                            </div>
+                            <div class="pac-fields">
+                                <div class="form-field">
+                                    <label>Google OAuth Client ID</label>
+                                    <input type="text" id="yt-client-id" placeholder="Google Cloud Console Client ID">
+                                </div>
+                                <div class="form-field">
+                                    <label>OAuth Client Secret</label>
+                                    <input type="password" id="yt-client-secret" placeholder="Client Secret" autocomplete="new-password">
+                                </div>
+                                <div class="form-field">
+                                    <label>Refresh Token</label>
+                                    <input type="password" id="yt-refresh-token" placeholder="OAuth Refresh Token" autocomplete="new-password">
+                                </div>
+                                <div class="form-field">
+                                    <label>Channel ID</label>
+                                    <input type="text" id="yt-channel-id" placeholder="Your YouTube Channel ID">
+                                </div>
+                            </div>
+                            <div class="pac-guide">
+                                <details>
+                                    <summary><i class="ph ph-info"></i> How to get YouTube Data API credentials</summary>
+                                    <ol>
+                                        <li>Go to <strong>console.cloud.google.com</strong> → Create a project</li>
+                                        <li>Enable <strong>YouTube Data API v3</strong></li>
+                                        <li>Create OAuth 2.0 credentials (Web App type)</li>
+                                        <li>Add <code>https://developers.google.com/oauthplayground</code> as redirect URI</li>
+                                        <li>Go to <strong>OAuth Playground</strong>, authorize scope: <code>https://www.googleapis.com/auth/youtube.upload</code></li>
+                                        <li>Exchange authorization code for Refresh Token — store it here</li>
+                                        <li><strong>Automation:</strong> POST to <code>https://www.googleapis.com/upload/youtube/v3/videos</code> with video file + metadata</li>
+                                    </ol>
+                                </details>
+                            </div>
+                        </div>
+
+                        <!-- TWITTER / X -->
+                        <div class="platform-account-card glass-card" id="acc-twitter">
+                            <div class="pac-header">
+                                <div class="pac-icon" style="background:#000"><i class="ph-fill ph-twitter-logo"></i></div>
+                                <div>
+                                    <div class="pac-name">Twitter / X</div>
+                                    <div class="pac-status" id="status-twitter"><span class="status-dot-sm"></span> Not Connected</div>
+                                </div>
+                                <button class="btn btn-ghost btn-sm" onclick="testConnection('twitter')"><i class="ph ph-plug"></i> Test</button>
+                            </div>
+                            <div class="pac-fields">
+                                <div class="form-row">
+                                    <div class="form-field">
+                                        <label>API Key</label>
+                                        <input type="text" id="tw-api-key" placeholder="API Key (Consumer Key)">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>API Secret</label>
+                                        <input type="password" id="tw-api-secret" placeholder="API Secret" autocomplete="new-password">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-field">
+                                        <label>Access Token</label>
+                                        <input type="password" id="tw-access-token" placeholder="Access Token" autocomplete="new-password">
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Access Token Secret</label>
+                                        <input type="password" id="tw-access-secret" placeholder="Access Token Secret" autocomplete="new-password">
+                                    </div>
+                                </div>
+                                <div class="form-field">
+                                    <label>Bearer Token</label>
+                                    <input type="password" id="tw-bearer-token" placeholder="Bearer Token (for v2 API)" autocomplete="new-password">
+                                </div>
+                            </div>
+                            <div class="pac-guide">
+                                <details>
+                                    <summary><i class="ph ph-info"></i> How to get Twitter/X API credentials</summary>
+                                    <ol>
+                                        <li>Apply for a developer account at <strong>developer.x.com</strong></li>
+                                        <li>Create a new App in the Developer Portal</li>
+                                        <li>Under <strong>Keys and Tokens</strong>, generate all 4 keys</li>
+                                        <li>Set App permissions to <strong>Read and Write</strong></li>
+                                        <li><strong>Automation (v2 API):</strong> <code>POST https://api.twitter.com/2/tweets</code> with Bearer Token header and <code>{"text": "your tweet"}</code> body</li>
+                                        <li>Note: Free tier allows 1,500 tweets/month. Basic plan ($100/mo) for higher limits.</li>
+                                    </ol>
+                                </details>
+                            </div>
+                        </div>
+
+                        <!-- LINKEDIN -->
+                        <div class="platform-account-card glass-card" id="acc-linkedin">
+                            <div class="pac-header">
+                                <div class="pac-icon" style="background:linear-gradient(135deg,#0a66c2,#004182)"><i class="ph-fill ph-linkedin-logo"></i></div>
+                                <div>
+                                    <div class="pac-name">LinkedIn</div>
+                                    <div class="pac-status" id="status-linkedin"><span class="status-dot-sm"></span> Not Connected</div>
+                                </div>
+                                <button class="btn btn-ghost btn-sm" onclick="testConnection('linkedin')"><i class="ph ph-plug"></i> Test</button>
+                            </div>
+                            <div class="pac-fields">
+                                <div class="form-field">
+                                    <label>Client ID</label>
+                                    <input type="text" id="li-client-id" placeholder="LinkedIn App Client ID">
+                                </div>
+                                <div class="form-field">
+                                    <label>Client Secret</label>
+                                    <input type="password" id="li-client-secret" placeholder="Client Secret" autocomplete="new-password">
+                                </div>
+                                <div class="form-field">
+                                    <label>Access Token (OAuth 2.0)</label>
+                                    <input type="password" id="li-access-token" placeholder="OAuth Access Token" autocomplete="new-password">
+                                </div>
+                            </div>
+                            <div class="pac-guide">
+                                <details>
+                                    <summary><i class="ph ph-info"></i> How to get LinkedIn API credentials</summary>
+                                    <ol>
+                                        <li>Go to <strong>developer.linkedin.com</strong> → Create App</li>
+                                        <li>Under <strong>Auth</strong> tab, get your Client ID and Secret</li>
+                                        <li>Request access to <strong>Share on LinkedIn</strong> API</li>
+                                        <li>Authorize with scope: <code>w_member_social, r_liteprofile</code></li>
+                                        <li><strong>Automation:</strong> <code>POST https://api.linkedin.com/v2/ugcPosts</code> with your Bearer token and post JSON</li>
+                                    </ol>
+                                </details>
+                            </div>
+                        </div>
+
+                        <!-- BLOGGER / BLOGSPOT -->
+                        <div class="platform-account-card glass-card" id="acc-blogger">
+                            <div class="pac-header">
+                                <div class="pac-icon" style="background:linear-gradient(135deg,#ff5722,#e64a19)"><i class="ph ph-globe-simple"></i></div>
+                                <div>
+                                    <div class="pac-name">Blogger / Blogspot</div>
+                                    <div class="pac-status" id="status-blogger"><span class="status-dot-sm"></span> Not Connected</div>
+                                </div>
+                                <button class="btn btn-ghost btn-sm" onclick="testConnection('blogger')"><i class="ph ph-plug"></i> Test</button>
+                            </div>
+                            <div class="pac-fields">
+                                <div class="form-field">
+                                    <label>Google OAuth Access Token</label>
+                                    <input type="password" id="bl-access-token" placeholder="Google OAuth Access Token" autocomplete="new-password">
+                                </div>
+                                <div class="form-field">
+                                    <label>Blog ID</label>
+                                    <input type="text" id="bl-blog-id" placeholder="Your Blogger Blog ID (from URL)">
+                                </div>
+                            </div>
+                            <div class="pac-guide">
+                                <details>
+                                    <summary><i class="ph ph-info"></i> How to get Blogger API credentials</summary>
+                                    <ol>
+                                        <li>Go to <strong>console.cloud.google.com</strong> → Enable <strong>Blogger API v3</strong></li>
+                                        <li>Create OAuth 2.0 credentials (same Google project as YouTube if desired)</li>
+                                        <li>Authorize with scope: <code>https://www.googleapis.com/auth/blogger</code></li>
+                                        <li>Your Blog ID is in the URL: <code>blogspot.com/blog/posts/&lt;BLOG_ID&gt;</code></li>
+                                        <li><strong>Automation:</strong> <code>POST https://www.googleapis.com/blogger/v3/blogs/&lt;BLOG_ID&gt;/posts</code></li>
+                                    </ol>
+                                </details>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- Automation Engine Card -->
+                    <div class="glass-card auto-engine-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-robot"></i> API Automation Engine</h3>
+                            <span class="chip">Post to All Platforms</span>
+                        </div>
+                        <p class="helper-text">Once credentials are saved, use this panel to compose a post and publish it simultaneously across all connected platforms.</p>
+
+                        <div class="auto-compose-area">
+                            <div class="form-field">
+                                <label>Post Content</label>
+                                <textarea id="autoPostContent" rows="4" placeholder="Write your post here, or use the AI Agent to generate it first, then paste it here..."></textarea>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-field">
+                                    <label>Media URL (optional)</label>
+                                    <input type="text" id="autoPostMedia" placeholder="https://link-to-your-image-or-video.jpg">
+                                </div>
+                                <div class="form-field">
+                                    <label>Schedule Time (optional)</label>
+                                    <input type="datetime-local" id="autoPostSchedule">
+                                </div>
+                            </div>
+                            <div class="form-field">
+                                <label>Select Platforms to Publish</label>
+                                <div class="platform-pills">
+                                    <label class="ppill ppill-ig"><input type="checkbox" name="autoPlat" value="instagram" checked><span><i class="ph-fill ph-instagram-logo"></i> Instagram</span></label>
+                                    <label class="ppill ppill-fb"><input type="checkbox" name="autoPlat" value="facebook" checked><span><i class="ph-fill ph-facebook-logo"></i> Facebook</span></label>
+                                    <label class="ppill ppill-yt"><input type="checkbox" name="autoPlat" value="youtube"><span><i class="ph-fill ph-youtube-logo"></i> YouTube</span></label>
+                                    <label class="ppill ppill-tw"><input type="checkbox" name="autoPlat" value="twitter"><span><i class="ph-fill ph-twitter-logo"></i> Twitter/X</span></label>
+                                    <label class="ppill ppill-li"><input type="checkbox" name="autoPlat" value="linkedin"><span><i class="ph-fill ph-linkedin-logo"></i> LinkedIn</span></label>
+                                    <label class="ppill ppill-blog"><input type="checkbox" name="autoPlat" value="blogger"><span><i class="ph ph-globe-simple"></i> Blogger</span></label>
+                                </div>
+                            </div>
+                            <div class="form-actions-row">
+                                <button class="btn btn-ghost" onclick="previewAutoPost()"><i class="ph ph-eye"></i> Preview</button>
+                                <button class="btn btn-primary" onclick="publishNow()"><i class="ph ph-paper-plane-tilt"></i> Publish Now (API)</button>
+                            </div>
+                        </div>
+
+                        <!-- Publish Log -->
+                        <div class="publish-log" id="publishLog"></div>
+
+                        <!-- API Automation Scripts -->
+                        <div class="api-scripts-section">
+                            <div class="card-header" style="margin-top:28px">
+                                <h3><i class="ph ph-code"></i> Ready-to-Use Automation Scripts</h3>
+                                <span class="chip">Copy & Run</span>
+                            </div>
+                            <p class="helper-text">These Python scripts use your saved credentials to automate posting. Run them manually, via cron job, or through Antigravity's /schedule command.</p>
+                            <div class="scripts-tabs">
+                                <button class="script-tab active" data-script="python-ig" onclick="switchScriptTab(this, 'python-ig')">Instagram</button>
+                                <button class="script-tab" data-script="python-fb" onclick="switchScriptTab(this, 'python-fb')">Facebook</button>
+                                <button class="script-tab" data-script="python-tw" onclick="switchScriptTab(this, 'python-tw')">Twitter/X</button>
+                                <button class="script-tab" data-script="python-li" onclick="switchScriptTab(this, 'python-li')">LinkedIn</button>
+                                <button class="script-tab" data-script="python-yt" onclick="switchScriptTab(this, 'python-yt')">YouTube</button>
+                                <button class="script-tab" data-script="python-bl" onclick="switchScriptTab(this, 'python-bl')">Blogger</button>
+                            </div>
+                            <div class="script-block-wrapper">
+                                <button class="btn btn-ghost btn-sm copy-script-btn" onclick="copyScript()"><i class="ph ph-copy"></i> Copy Script</button>
+                                <pre class="script-block" id="scriptDisplay"></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- ═══ PAGE: CANVA STUDIO ═══ -->
+            <div class="page-content" id="page-canva">
+                <div class="canva-layout fade-up">
+
+                    <!-- Canva Connect Info -->
+                    <div class="glass-card canva-banner">
+                        <div class="canva-banner-icon"><i class="ph ph-paint-brush-broad"></i></div>
+                        <div class="canva-banner-text">
+                            <h2>Canva Studio Integration</h2>
+                            <p>Design, automate, and publish — all from one place. Connect your Canva account to access your designs, generate new ones with AI, and push them directly to your social platforms.</p>
+                        </div>
+                    </div>
+
+                    <div class="canva-main-grid">
+
+                        <!-- Canva Connect Panel -->
+                        <div class="glass-card canva-connect-card">
+                            <div class="card-header">
+                                <h3><i class="ph ph-key"></i> Canva API Connection</h3>
+                                <div class="pac-status" id="status-canva"><span class="status-dot-sm"></span> Not Connected</div>
+                            </div>
+                            <div class="pac-fields">
+                                <div class="form-field">
+                                    <label>Canva API Client ID</label>
+                                    <input type="text" id="canva-client-id" placeholder="Your Canva App Client ID">
+                                </div>
+                                <div class="form-field">
+                                    <label>Canva API Client Secret</label>
+                                    <input type="password" id="canva-client-secret" placeholder="Client Secret" autocomplete="new-password">
+                                </div>
+                                <div class="form-field">
+                                    <label>Access Token</label>
+                                    <input type="password" id="canva-access-token" placeholder="Paste OAuth Access Token here" autocomplete="new-password">
+                                </div>
+                            </div>
+                            <div class="form-actions-row">
+                                <button class="btn btn-ghost" onclick="openCanvaAuth()"><i class="ph ph-sign-in"></i> Authorize with Canva</button>
+                                <button class="btn btn-primary" onclick="saveCanvaCredentials()"><i class="ph ph-floppy-disk"></i> Save & Connect</button>
+                            </div>
+                            <div class="pac-guide">
+                                <details open>
+                                    <summary><i class="ph ph-info"></i> How to set up Canva API access</summary>
+                                    <ol>
+                                        <li>Go to <strong>canva.com/developers</strong> → Create a new Integration</li>
+                                        <li>Set Integration Type to <strong>Canva Connect API</strong></li>
+                                        <li>Copy your <strong>Client ID</strong> and <strong>Client Secret</strong></li>
+                                        <li>Click <strong>Authorize with Canva</strong> above — it will open Canva's OAuth page</li>
+                                        <li>After approval, Canva will redirect with an auth code — paste the resulting Access Token here</li>
+                                        <li>You can now list designs, create from templates, and export assets automatically</li>
+                                    </ol>
+                                </details>
+                            </div>
+                        </div>
+
+                        <!-- Canva Design Tools -->
+                        <div class="canva-tools-col">
+
+                            <!-- Open in Canva -->
+                            <div class="glass-card canva-tool-card">
+                                <div class="card-header">
+                                    <h3><i class="ph ph-arrow-square-out"></i> Open Canva Editor</h3>
+                                </div>
+                                <p class="helper-text">Launch Canva directly in a new tab for full-featured design. Choose a pre-optimized template for each platform.</p>
+                                <div class="canva-templates-grid">
+                                    <button class="canva-tpl-btn" onclick="openCanvaTemplate('ig-post')"><i class="ph-fill ph-instagram-logo"></i><span>IG Post<br><small>1080×1080</small></span></button>
+                                    <button class="canva-tpl-btn" onclick="openCanvaTemplate('ig-story')"><i class="ph-fill ph-instagram-logo"></i><span>IG Story<br><small>1080×1920</small></span></button>
+                                    <button class="canva-tpl-btn" onclick="openCanvaTemplate('fb-cover')"><i class="ph-fill ph-facebook-logo"></i><span>FB Cover<br><small>851×315</small></span></button>
+                                    <button class="canva-tpl-btn" onclick="openCanvaTemplate('yt-thumb')"><i class="ph-fill ph-youtube-logo"></i><span>YT Thumbnail<br><small>1280×720</small></span></button>
+                                    <button class="canva-tpl-btn" onclick="openCanvaTemplate('li-post')"><i class="ph-fill ph-linkedin-logo"></i><span>LinkedIn Post<br><small>1200×627</small></span></button>
+                                    <button class="canva-tpl-btn" onclick="openCanvaTemplate('tw-header')"><i class="ph-fill ph-twitter-logo"></i><span>Twitter Header<br><small>1500×500</small></span></button>
+                                    <button class="canva-tpl-btn" onclick="openCanvaTemplate('blog-banner')"><i class="ph ph-article"></i><span>Blog Banner<br><small>1920×600</small></span></button>
+                                    <button class="canva-tpl-btn" onclick="openCanvaTemplate('custom')"><i class="ph ph-plus"></i><span>Custom Size<br><small>Enter dims</small></span></button>
+                                </div>
+                            </div>
+
+                            <!-- Design to Post Workflow -->
+                            <div class="glass-card canva-tool-card">
+                                <div class="card-header">
+                                    <h3><i class="ph ph-path"></i> Design → Publish Workflow</h3>
+                                    <span class="chip">Automation</span>
+                                </div>
+                                <p class="helper-text">Once you've created a design in Canva, paste its shareable link here and Nexus will help you publish it to your connected platforms.</p>
+                                <div class="form-field">
+                                    <label>Canva Design Share Link</label>
+                                    <input type="text" id="canvaDesignLink" placeholder="https://www.canva.com/design/your-design-id/view">
+                                </div>
+                                <div class="form-field">
+                                    <label>Caption / Post Text</label>
+                                    <textarea id="canvaPostCaption" rows="3" placeholder="Write your caption here, or click Generate to create one with AI..."></textarea>
+                                </div>
+                                <div class="form-actions-row">
+                                    <button class="btn btn-ghost" onclick="genCanvaCaption()"><i class="ph-fill ph-magic-wand"></i> AI Caption</button>
+                                    <button class="btn btn-primary" onclick="publishCanvaDesign()"><i class="ph ph-paper-plane-tilt"></i> Publish Design</button>
+                                </div>
+                                <div id="canvaPublishLog" class="publish-log"></div>
+                            </div>
+
+                            <!-- Canva AI Image Brief -->
+                            <div class="glass-card canva-tool-card">
+                                <div class="card-header">
+                                    <h3><i class="ph ph-brain"></i> AI Visual Brief Generator</h3>
+                                </div>
+                                <p class="helper-text">Describe your post and this tool will generate a detailed design brief you can hand off to a designer or use as a Canva AI prompt.</p>
+                                <div class="form-field">
+                                    <label>Post Topic & Goal</label>
+                                    <textarea id="canvaBriefTopic" rows="2" placeholder="e.g., Product launch for our new AI tool, target audience: tech founders, tone: modern & minimal"></textarea>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-field">
+                                        <label>Platform</label>
+                                        <select id="canvaBriefPlatform">
+                                            <option>Instagram Post</option>
+                                            <option>Instagram Story</option>
+                                            <option>YouTube Thumbnail</option>
+                                            <option>Facebook Cover</option>
+                                            <option>LinkedIn Banner</option>
+                                            <option>Blog Header</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-field">
+                                        <label>Style</label>
+                                        <select id="canvaBriefStyle">
+                                            <option>Modern & Minimal</option>
+                                            <option>Bold & Vibrant</option>
+                                            <option>Corporate & Professional</option>
+                                            <option>Playful & Colorful</option>
+                                            <option>Dark & Premium</option>
+                                            <option>Retro & Vintage</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <button class="btn btn-primary" onclick="generateVisualBrief()"><i class="ph ph-note-pencil"></i> Generate Design Brief</button>
+                                <div class="studio-output" id="canvaBriefOutput"></div>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+    <script src="credentials.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
