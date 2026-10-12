@@ -12,8 +12,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.10", "3.12"]
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -34,6 +37,43 @@ jobs:
 
       - name: Front-end test suite
         run: node tests/test_ui.mjs
+
+      - name: Relay config validation (LAN requires a token)
+        run: |
+          python agent/nexus_relay.py --check-config
+          ! python agent/nexus_relay.py --lan --check-config
+          python agent/nexus_relay.py --lan --token "$(python agent/nexus_relay.py --generate-token)" --check-config
+
+  browser-deps:
+    # Real dependency install + Playwright launch on every desktop OS. No site is
+    # contacted: it only proves the stealth loader and channel detection work.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - run: python -m playwright install chromium
+      - name: Stealth + channel + headless launch
+        run: |
+          python - <<'PY'
+          import sys; sys.path.insert(0, "agent")
+          from browser_core import load_stealth, detect_channel, BrowserSession
+          st = load_stealth(); print("stealth:", st.mode, st.reason); assert st.mode == "v2", st.reason
+          print("channel:", detect_channel())
+          with BrowserSession(platform="ci") as s:
+              s.page.set_content("<h1>ok</h1>")
+              assert s.page.inner_text("h1") == "ok"
+          print("launch ok")
+          PY
 
   ui-smoke:
     # Proves the UI actually boots in a real browser — a syntax check cannot catch

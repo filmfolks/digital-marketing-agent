@@ -35,6 +35,8 @@ credentials.js
 logs/*.json
 logs/*.jsonl
 logs/browser_profile/
+logs/profiles/
+logs/social_profile/
 logs/browser_session.json
 logs/publish_queue.json
 logs/publish_job.json

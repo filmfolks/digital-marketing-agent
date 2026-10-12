@@ -38,7 +38,7 @@ bad()     { printf '\033[0;31m  ✘ %s\033[0m\n' "$1"; FAILURES=$((FAILURES + 1)
 if [ "$RUN_LINT" = "1" ]; then
     section "Syntax"
 
-    if "$PY" -m py_compile agent/*.py skill/digital-marketer/scripts/*.py tests/*.py; then
+    if "$PY" -m py_compile agent/*.py skill/digital-marketer/scripts/*.py tests/*.py scripts/*.py; then
         ok "Python sources compile"
     else
         bad "Python syntax errors"

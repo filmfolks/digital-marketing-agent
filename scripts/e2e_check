@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+# Verify logins + Canva export + X dry-run without posting. See TESTING.md.
+cd "$(dirname "$0")/.." || exit 1
+PY="${PYTHON:-}"
+[ -z "$PY" ] && [ -x .venv/bin/python ] && PY=.venv/bin/python
+[ -z "$PY" ] && PY=python3
+exec "$PY" scripts/e2e_check.py "$@"
