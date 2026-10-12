@@ -415,5 +415,105 @@ class ProviderChain(unittest.TestCase):
             br.default_llm("s", "u", provider="openai", post=lambda *a: (200, {}))
 
 
+class CatalogueSites(unittest.TestCase):
+    """Regressions found crawling a real small-business site (2026-10-12)."""
+    SHOP = "https://shop.example"
+    TITLE = "<title>Veg Mini Burgers: Order Online, Track, Shipping &amp; WhatsApp Support</title>"
+
+    def web(self):
+        items = "".join(f'<a href="/menu-item/{i}">i{i}</a>' for i in range(1, 21))
+        pages = {
+            f"{self.SHOP}/robots.txt": "User-agent: *\nDisallow:\n",
+            f"{self.SHOP}/": f"""{self.TITLE}<h1>Veg Mini Burgers</h1><h2>What Our Customers Say</h2>
+                <h2>Byte Burgers</h2><h3>Burger FAQs</h3><h3>Stay Connected</h3><h2>Contact Us</h2>
+                <p>The best mini burgers, delivered fast.</p><p>© 2025 Shop. All Rights Reserved.</p>
+                <a href="tel:+91 74114 52577">call</a> <a href="https://wa.me/7411452577">wa</a>
+                <a href="https://www.instagram.com/shop/">ig</a> {items}
+                <a href="/about">About</a><a href="/contact">Contact</a><a href="/bulkorders">Bulk</a>""",
+            f"{self.SHOP}/about": self.TITLE + "<p>Our story.</p>",
+            f"{self.SHOP}/contact": self.TITLE + "<p>Visit us.</p>",
+            f"{self.SHOP}/bulkorders": self.TITLE + "<p>Party orders.</p>",
+        }
+        for i in range(1, 21):
+            pages[f"{self.SHOP}/menu-item/{i}"] = self.TITLE + "<h1>Product Detail</h1><h2>Releted</h2>"
+        return FakeWeb(pages=pages)
+
+    def test_catalogue_pages_do_not_crowd_out_about_and_contact(self):
+        res = br.crawl_site(self.SHOP, fetch=self.web(), sleep=lambda s: None, max_pages=8)
+        urls = [p["url"] for p in res["pages"]]
+        for path in ("/about", "/contact", "/bulkorders"):
+            self.assertIn(self.SHOP + path, urls)
+        self.assertLessEqual(sum("/menu-item/" in u for u in urls), br.SAME_TEMPLATE_CAP + 1)
+
+    def test_path_beats_a_shared_site_wide_title(self):
+        t = "Veg Mini Burgers: Order Online, Track, Shipping & WhatsApp Support | e-store"
+        self.assertEqual(br.classify_page(self.SHOP + "/about", t), "about")
+        self.assertEqual(br.classify_page(self.SHOP + "/bulkorders", t), "services")
+        self.assertEqual(br.classify_page(self.SHOP + "/menu-item/3", ""), "products")
+
+    def test_summary_drops_boilerplate_and_extracts_phone_whatsapp_social(self):
+        res = br.crawl_site(self.SHOP, fetch=self.web(), sleep=lambda s: None, max_pages=6)
+        site = br.summarize_site(res)
+        self.assertIn("Byte Burgers", site["service_candidates"])
+        for junk in ("What Our Customers Say", "Burger FAQs", "Stay Connected", "Contact Us", "Releted"):
+            self.assertNotIn(junk, site["service_candidates"])
+        self.assertFalse(any(x.startswith("©") for x in site["sample_copy"]))
+        self.assertEqual(site["contact"]["phones"], ["+91 74114 52577"])
+        self.assertEqual(site["contact"]["whatsapp"], ["https://wa.me/7411452577"])
+        self.assertEqual(site["contact"]["social"], ["https://www.instagram.com/shop"])
+
+    def test_redirect_duplicates_placeholders_share_links_and_cf_emails(self):
+        web = self.web()
+        web.pages[f"{self.SHOP}/"] += ('<a href="/checkout">co</a><a href="/cdn-cgi/l/email-protection#b9dbc0">e</a>'
+                                       '<a href="/old-menu">m</a><p>Write to your@email.com</p>'
+                                       '<a href="https://twitter.com/intent/tweet?text=x">t</a><a href="https://www.youtube.com/watch?v=abc">v</a>'
+                                       '<a href="https://api.whatsapp.com/send?text=y">s</a>'
+                                       '<a href="/cdn-cgi/l/email-protection#422e2d2c2423296c232f">x</a>')
+        web.redirects[f"{self.SHOP}/old-menu"] = f"{self.SHOP}/about"
+        res = br.crawl_site(self.SHOP, fetch=web, sleep=lambda s: None, max_pages=12)
+        urls = [p["url"] for p in res["pages"]]
+        self.assertEqual(len(urls), len(set(urls)), urls)
+        self.assertFalse(any("/cdn-cgi/" in u or "/checkout" in u for u in web.calls))
+        site = br.summarize_site(res)
+        self.assertNotIn("your@email.com", site["contact"]["emails"])
+        self.assertEqual(site["contact"]["whatsapp"], ["https://wa.me/7411452577"])
+        self.assertEqual(site["contact"]["social"], ["https://www.instagram.com/shop"])
+
+    def test_unlinked_about_and_contact_are_probed(self):
+        web = self.web()
+        web.pages[f"{self.SHOP}/"] = web.pages[f"{self.SHOP}/"].replace('<a href="/about">About</a><a href="/contact">Contact</a>', "")
+        res = br.crawl_site(self.SHOP, fetch=web, sleep=lambda s: None, max_pages=6)
+        urls = [p["url"] for p in res["pages"]]
+        self.assertIn(self.SHOP + "/about", urls)
+        self.assertIn(self.SHOP + "/contact", urls)
+
+    def test_cloudflare_email_decoding(self):
+        enc = "42" + "".join(f"{ord(c) ^ 0x42:02x}" for c in "hi@shop.in")
+        self.assertEqual(br.cf_decode_email(enc), "hi@shop.in")
+        page = br.parse_page(self.SHOP, f'<a href="/cdn-cgi/l/email-protection#{enc}">[email&#160;protected]</a>')
+        self.assertEqual(page["emails"], ["hi@shop.in"])
+
+    def test_section_headings_and_commerce_words_are_not_services_or_hashtags(self):
+        for h in ("Why Choose AcmeBites for Bulk Orders?", "How It Works", "Delivery Partners",
+                  "Let's Make Your Event Delicious", "Bulk Order Enquiry", "Perfect For Every Occasion"):
+            self.assertTrue(br.is_generic_heading(h), h)
+        for h in ("Veg Mini Burgers", "Acme Bites Burger Combos", "Sides & Snacks", "Teeth Whitening"):
+            self.assertFalse(br.is_generic_heading(h), h)
+        prof = br.heuristic_profile({"business_name": "Acmebites"},
+                                    {"site_summary": {"top_terms": ["burgers", "order", "online", "veg", "whatsapp", "acmebites", "paneer"]}})
+        self.assertEqual(prof["hashtag_sets"]["niche"], ["burgers", "paneer"])
+
+    def test_plan_only_uses_the_brands_channels(self):
+        self.assertEqual(br.cadence_for({"handles": {"twitter": "AcmeBites"}, "website": "https://b.example"}),
+                         {"x": 5, "blog": 1})
+        self.assertEqual(br.cadence_for({"handles": {}}), br.DEFAULT_CADENCE)
+        with tempfile.TemporaryDirectory() as d:
+            store = br.BrandStore(d)
+            b = store.create({"business_name": "Acmebites", "website": "https://b.example", "handles": {"x": "AcmeBites"}})
+            store.write(b["id"], "profile", br.normalize_profile(br.heuristic_profile(b, {}), b))
+            plan = br.run_plan(store, b["id"], llm=lambda s, u: (_ for _ in ()).throw(RuntimeError("no AI")))
+            self.assertEqual({c["platform"] for c in plan["calendar"]}, {"x", "blog"})
+
+
 if __name__ == "__main__":
     unittest.main()

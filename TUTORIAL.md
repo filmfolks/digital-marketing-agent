@@ -63,3 +63,10 @@ Every dispatch, provider retry, failover, publish attempt, connection test and e
 | HTTP 404 model not found | Model name changed | Set exact model id in Accounts page provider-model field or provider console |
 | Empty output tab | Model returned no choices | Logged as error; check provider quota |
 | Publish says "No credentials" | Token missing | Connect account; failure is documented in Agent Logs |
+
+
+## 10. More tutorials
+- Brains (Antigravity live bridge, LM Studio/Hermes, cloud, Sho · Grok Bot): [docs/tutorials/BRAINS.md](docs/tutorials/BRAINS.md)
+- Posting to X / Instagram / Facebook with approval, Activity log, link memory: [docs/tutorials/POSTING.md](docs/tutorials/POSTING.md)
+- Auto-start on macOS (Full Disk Access) and Windows: [docs/tutorials/AUTOSTART.md](docs/tutorials/AUTOSTART.md)
+- Moving Nexus to a Windows laptop via pendrive: [docs/tutorials/WINDOWS_PORTABLE.md](docs/tutorials/WINDOWS_PORTABLE.md)

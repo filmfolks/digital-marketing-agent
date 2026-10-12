@@ -1,19 +1,20 @@
 # Digital Marketing Agent Dependencies
-# Upper bounds stop a future major release from breaking a fresh install.
-# Verified 2026-10-12 with: openai 2.54, litellm 1.105, pydantic 2.14, google-genai 2.29,
-# playwright 1.63, pillow 12.3, requests 2.34, python-dotenv 1.2.
-# Compatible with local models (LM Studio, Ollama, Hermes) and Cloud APIs
+#
+# Posting needs only requirements-posting.txt (exact pins, Python 3.9+).
+# The AI SDKs below are OPTIONAL: Nexus talks to every provider over plain
+# HTTP (generate_content.py / ai-client.js) and never imports them, so a
+# failed install here never blocks posting.
+#
+# Python 3.9 (macOS Xcode CLT /usr/bin/python3): the open-ended ranges made pip
+# backtrack through hundreds of litellm releases; exact cp39-compatible pins
+# are used there instead (resolved with uv for macOS x86_64 + arm64, binary wheels).
+-r requirements-posting.txt
 
-openai>=1.20.0,<3
-litellm>=1.40.0,<2
-requests>=2.31.0,<3
-python-dotenv>=1.0.0,<2
-pydantic>=2.0.0,<3
-google-genai>=0.1.0,<3; python_version >= '3.10'
+openai==2.48.0; python_version < "3.10"
+litellm==1.83.0; python_version < "3.10"
+pillow==11.3.0; python_version < "3.10"
 
-# Browser Automation & Chrome DevTools Fallback (Headless/Headed Human-Like Posting)
-playwright>=1.40.0,<2
-# browser_core.load_stealth uses the 2.x API (Stealth().apply_stealth_sync) and
-# falls back to 1.x stealth_sync; 1.x also needs setuptools (pkg_resources).
-playwright-stealth>=2.0.0,<3
-pillow>=10.0.0,<13
+openai>=1.20.0,<4; python_version >= "3.10"
+litellm>=1.40.0,<2; python_version >= "3.10"
+pillow>=10.0.0,<13; python_version >= "3.10"
+google-genai>=0.1.0,<3; python_version >= "3.10"

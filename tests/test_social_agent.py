@@ -1,5 +1,7 @@
 """Unit tests for social_browser_agent.py and the /social endpoint."""
 
+from __future__ import annotations
+
 import json
 import subprocess
 import sys

@@ -120,6 +120,15 @@ Posts you publish from the phone run on the Mac: API first, then the browser fal
 7. Add a second brand and switch between them in the top bar. Generation follows the selected brand.
 8. **Delete brand** removes `data/brands/<id>/` and the switcher falls back to the remaining brand.
 
+## 9. Brains, Activity, links (posts nothing)
+1. Antigravity: open the app, then `curl -s http://127.0.0.1:8712/antigravity/status`. In the UI, choose *Google Antigravity (live brain)* and click Generate; the text streams in.
+2. Sho: set the engine to *Sho · Grok Bot*, click Generate, then run `python3 agent/brain_bridge.py list` and `answer <id> --file reply.txt`. For a post job, run `approve <id> --publish --dry-run`.
+3. Dry-run each flow: `social_browser_agent.py x_post --text hi --dry-run`, `ig_post --caption hi --media img.png --dry-run`, `fb_post --text hi --page-url https://www.facebook.com/YourPage --dry-run`.
+4. The Activity page lists the dry runs. Brand Setup → Saved links shows the visited pages.
+
+## 10. Windows (when you have a laptop to test on)
+Follow docs/tutorials/WINDOWS_PORTABLE.md, then run `.venv\Scripts\python.exe -m unittest discover -s tests` and `start.bat -Check`.
+
 ## Troubleshooting
 | Symptom | Fix |
 |---|---|

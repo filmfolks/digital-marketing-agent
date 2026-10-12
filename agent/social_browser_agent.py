@@ -70,7 +70,7 @@ from browser_core import (BrowserSession, LoggedOut, HumanCheckRequired, Pacer, 
 import social_flows  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-AUDIT_LOG = ROOT / "logs" / "browser_audit.jsonl"
+AUDIT_LOG = Path(os.environ.get("NEXUS_AUDIT_LOG") or ROOT / "logs" / "browser_audit.jsonl")
 SESSION_FILE = ROOT / "logs" / "social_session.json"
 PROFILE_DIR = PROFILES_DIR          # one sub-directory per platform (see browser_core.profile_dir)
 SHOTS_DIR = ROOT / "shots"
@@ -119,6 +119,13 @@ def audit(command: str, args: dict, status: str, detail: str = "", **extra) -> N
     except OSError as e:
         print(f"[audit] could not write audit log: {e}", file=sys.stderr)
     print(f"[audit] {status.upper():7s} {command}: {(detail or status)[:120]}", file=sys.stderr)
+    # Every command finish (ok / error / blocked / dry run) also lands in the
+    # brand's persistent activity log shown in the app (Activity page).
+    try:
+        import activity_log
+        activity_log.record_audit(entry)
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[activity] {e}", file=sys.stderr)
 
 
 def is_denied(*targets: str) -> bool:
@@ -207,7 +214,26 @@ def get_playwright_page(platform: str = "default", headless: bool = True):
     America/New_York, and silently dropped stealth on playwright-stealth 2.x.)
     """
     sess = BrowserSession(platform=platform, headless=headless).__enter__()
+    if sess.attached:
+        # Legacy callers end with ctx.close(); pw.stop(). In attach mode those
+        # must only close our tab and drop the connection, never the user's browser.
+        return _AttachedHandle(sess, "pw"), _AttachedHandle(sess, "ctx"), sess.page
     return sess.pw, sess.ctx, sess.page
+
+
+class _AttachedHandle:
+    """Proxy for pw/ctx in attach mode: close()/stop() end OUR session only."""
+
+    def __init__(self, sess, which: str):
+        self._sess, self._which = sess, which
+
+    def close(self, *a, **k):
+        self._sess.__exit__(None, None, None)
+
+    stop = close
+
+    def __getattr__(self, name):
+        return getattr(getattr(self._sess, self._which), name)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -867,6 +893,9 @@ def _run_flow(command: str, args, platform: str, fn, headed: bool | None = None)
         with BrowserSession(platform=platform, headless=headless) as sess:
             try:
                 res = fn(sess)
+                if (platform == "instagram" and isinstance(res, dict) and res.get("ok")
+                        and not res.get("dry_run") and not res.get("permalink")):
+                    res["permalink"] = ig_permalink_fallback(sess.page)
             except (LoggedOut, HumanCheckRequired) as e:
                 shot = sess.screenshot("logged_out")
                 audit(command, vars(args), "error", "logged out", platform=platform, screenshot=shot)
@@ -884,9 +913,45 @@ def _run_flow(command: str, args, platform: str, fn, headed: bool | None = None)
         result_err(f"browser launch failed: {str(e)[:300]}")
         return 4
     audit(command, vars(args), "ok", json.dumps(res, default=str)[:300], platform=platform,
-          dry_run=bool(res.get("dry_run")))
+          dry_run=bool(res.get("dry_run")), permalink=res.get("permalink"),
+          screenshot=res.get("screenshot"))
     print(json.dumps(res, default=str))
     return 0
+
+
+IG_NEWEST_POST_JS = social_flows.PERMALINK_JS["instagram"]
+
+
+def ig_permalink_fallback(page, profile_url: str = "", tries: int = 3, wait_ms: int = 4000) -> str | None:
+    """The IG flow sometimes returns no permalink (grid not rendered yet).
+    Open the profile, wait longer, reload between tries, take the newest
+    non-pinned /p/ (or /reel/) link and remember it. Never raises."""
+    try:
+        import link_memory
+        profile = profile_url or link_memory.preferred("instagram", "profile", "")
+        if not profile:
+            handle = (((social_flows.link_memory._social_links() or {}).get("instagram") or {})
+                      .get("handle") or "").lstrip("@")
+            profile = f"https://www.instagram.com/{handle}/" if handle else ""
+        if not profile:
+            return None
+        for i in range(max(1, tries)):
+            try:
+                if i == 0:
+                    page.goto(profile, wait_until="domcontentloaded", timeout=45000)
+                else:
+                    page.reload(wait_until="domcontentloaded", timeout=45000)
+                page.wait_for_timeout(wait_ms)
+                hrefs = [h for h in (page.evaluate(IG_NEWEST_POST_JS) or []) if isinstance(h, str)]
+            except Exception:                                # noqa: BLE001
+                hrefs = []
+            if hrefs:
+                link = link_memory.normalize(hrefs[0])
+                link_memory.record("instagram", "post", link, "newest post after publish (fallback scrape)")
+                return link
+        return None
+    except Exception:                                        # noqa: BLE001
+        return None
 
 
 def cmd_login(args):
@@ -956,11 +1021,62 @@ def cmd_x_post(args):
     try:
         social_flows.validate_x_text(args.text, args.long_post)
     except social_flows.FlowError as e:
+        audit("x_post", vars(args), "error", f"validation: {e}"[:300])
         result_err(str(e))
         return 4
     return _run_flow("x_post", args, "x", lambda sess: social_flows.x_post(
         sess.page, args.text, _media_list(args), long_post=args.long_post,
         dry_run=args.dry_run, screenshot=sess.screenshot))
+
+
+def cmd_ig_post(args):
+    """Instagram feed post via the resilient flow (supports --dry-run)."""
+    args.caption = _read_text_arg(args.caption, args.caption_file)
+    if not args.dry_run:
+        require_actions(args)
+    if is_denied(args.caption):
+        block_denied("ig_post", args)
+    media = list(args.media or [])
+    try:
+        social_flows.validate_instagram(args.caption, media)
+    except social_flows.FlowError as e:
+        audit("ig_post", vars(args), "error", f"validation: {e}"[:300])
+        result_err(str(e))
+        return 4
+    return _run_flow("ig_post", args, "instagram", lambda sess: social_flows.instagram_post(
+        sess.page, args.caption, media, dry_run=args.dry_run, screenshot=sess.screenshot))
+
+
+def _read_text_arg(value: str, file: str) -> str:
+    if file:
+        return Path(file).read_text(encoding="utf-8").strip()
+    return value or ""
+
+
+def cmd_fb_post(args):
+    """Facebook Page post as the Page (switches profile if asked; supports --dry-run)."""
+    text = _read_text_arg(args.text, args.text_file)
+    args.text = text                    # full text lands in audit + activity log
+    if not args.dry_run:
+        require_actions(args)
+    if is_denied(text):
+        block_denied("fb_post", args)
+    media = list(args.media or [])
+    try:
+        social_flows.validate_facebook(text, media)
+    except social_flows.FlowError as e:
+        audit("fb_post", vars(args), "error", f"validation: {e}"[:300])
+        result_err(str(e))
+        return 4
+    return _run_flow("fb_post", args, "facebook", lambda sess: social_flows.facebook_page_post(
+        sess.page, text, media, page_url=args.page_url, dry_run=args.dry_run, screenshot=sess.screenshot))
+
+
+def cmd_links(args):
+    """Print saved links (config social_links + link memory)."""
+    import link_memory
+    print(json.dumps(link_memory.view()))
+    return 0
 
 
 def cmd_canva_export(args):
@@ -1013,6 +1129,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Enable state-changing actions (click/type/post). Required for all post workflows.")
     p.add_argument("--headed", action="store_true",
                    help="Show the browser window (useful for manual login on first run)")
+    p.add_argument("--cdp-url", dest="cdp_url", default=None,
+                   help="Attach to an already-running Chrome (e.g. http://127.0.0.1:9222) instead of "
+                        "launching one; 'off' forces launch. Default: NEXUS_CDP_URL, then config/client.json.")
 
     sub = p.add_subparsers(dest="command")
 
@@ -1064,6 +1183,23 @@ def build_parser() -> argparse.ArgumentParser:
     xp.add_argument("--dry-run", action="store_true", dest="dry_run",
                     help="do everything except the final Post click")
 
+    igp = sub.add_parser("ig_post", help="Instagram feed post (resilient flow, supports --dry-run)")
+    igp.add_argument("--caption", default="")
+    igp.add_argument("--caption-file", dest="caption_file", default="", help="read the caption from a UTF-8 file")
+    igp.add_argument("--media", action="append", default=[], help="image/video path (repeatable, max 10)")
+    igp.add_argument("--dry-run", action="store_true", dest="dry_run",
+                     help="do everything except the final Share click")
+
+    fbp = sub.add_parser("fb_post", help="Facebook Page post as the Page (supports --dry-run)")
+    fbp.add_argument("--text", default="")
+    fbp.add_argument("--text-file", dest="text_file", default="", help="read the post text from a UTF-8 file")
+    fbp.add_argument("--media", action="append", default=[], help="image path (repeatable)")
+    fbp.add_argument("--page-url", dest="page_url", default="",
+                     help="Page URL (default: brand social_links.facebook.page, then link memory)")
+    fbp.add_argument("--dry-run", action="store_true", dest="dry_run", help="stop before the final Post click")
+
+    sub.add_parser("links", help="Show saved links (config social_links + link memory)")
+
     ce = sub.add_parser("canva_export", help="Open a Canva design and download it")
     ce.add_argument("--design-url", required=True, dest="design_url")
     ce.add_argument("--out", default="")
@@ -1083,6 +1219,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main():
     parser = build_parser()
     args = parser.parse_args()
+    if args.cdp_url is not None:            # BrowserSession (and child processes) read it from the env
+        os.environ["NEXUS_CDP_URL"] = args.cdp_url
     dispatch = {
         "status": cmd_status,
         "instagram_post": cmd_instagram_post,
@@ -1094,6 +1232,9 @@ def main():
         "login": cmd_login,
         "check_logins": cmd_check_logins,
         "x_post": cmd_x_post,
+        "ig_post": cmd_ig_post,
+        "fb_post": cmd_fb_post,
+        "links": cmd_links,
         "canva_export": cmd_canva_export,
         "canva_to_x": cmd_canva_to_x,
     }

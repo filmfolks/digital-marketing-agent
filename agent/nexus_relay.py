@@ -16,6 +16,8 @@ Endpoints
     POST /publish-due    publish every queued/scheduled job that is due
     POST /mcp            generic MCP tool call through nexus_mcp.py
     POST /shutdown       graceful stop (local, token-gated)
+    POST /antigravity/chat  Google Antigravity brain, streamed as text/event-stream (token)
+    GET  /antigravity/status  is the Antigravity app running / discoverable (token)
 
 Run it alongside the UI:
     python3 agent/nexus_relay.py                 # port 8712
@@ -61,6 +63,10 @@ PUBLISHER = AGENT_DIR / "publish.py"
 MCP = AGENT_DIR / "nexus_mcp.py"
 SOCIAL = AGENT_DIR / "social_browser_agent.py"
 LOGS = ROOT / "logs"
+sys.path.insert(0, str(ROOT / "agent"))
+import client_config  # noqa: E402
+import brain_bridge  # noqa: E402
+import antigravity_bridge  # noqa: E402
 VERSION = "3.1.0"
 UI_DIR = ROOT / "ui"
 STARTED = time.time()
@@ -138,6 +144,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Nexus-Token")
 
     def _reply(self, code: int, obj) -> None:
+        self._activity_status = code
         data = json.dumps(obj, default=str).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -166,6 +173,41 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(403, "Origin not allowed by the Nexus relay")
         path = self.path.split("?", 1)[0]
 
+        if path == "/brain/jobs" or path.startswith("/brain/jobs/"):
+            if not self._token_ok():
+                return self._error(401, "Invalid or missing X-Nexus-Token")
+            try:
+                if path == "/brain/jobs":
+                    q = urllib.parse.parse_qs(self.path.partition("?")[2])
+                    return self._reply(200, {"ok": True, "jobs": brain_bridge.list_jobs((q.get("status") or [None])[0])})
+                return self._reply(200, {"ok": True, "job": brain_bridge.get_job(path.rsplit("/", 1)[1])})
+            except ValueError as e:
+                return self._error(404, str(e))
+        if path == "/antigravity/status":
+            if not self._token_ok():
+                return self._error(401, "Invalid or missing X-Nexus-Token")
+            return self._reply(200, antigravity_bridge.status())
+        if path == "/activity":
+            if not self._token_ok():
+                return self._error(401, "Invalid or missing X-Nexus-Token")
+            import activity_log
+            q = urllib.parse.parse_qs(self.path.partition("?")[2])
+            one = lambda k: (q.get(k) or [""])[0]          # noqa: E731
+            try:
+                limit = int(one("limit") or 200)
+            except ValueError:
+                limit = 200
+            return self._reply(200, activity_log.query(one("platform"), one("status"), one("action"), limit))
+        if path == "/activity/media":
+            return self._activity_media()
+        if path == "/links":
+            if not self._token_ok():
+                return self._error(401, "Invalid or missing X-Nexus-Token")
+            import link_memory
+            return self._reply(200, link_memory.view())
+        if path == "/client":
+            # Unauthenticated like /health: names the client so the UI can brand itself.
+            return self._reply(200, {"ok": True, **client_config.public_view()})
         if path == "/health":
             # Deliberately unauthenticated so the UI can show relay status.
             return self._reply(200, health_payload(self.server))
@@ -176,7 +218,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/tools":
             if not self._token_ok():
                 return self._error(401, "Invalid or missing X-Nexus-Token")
-            return self._reply(200, {"ok": True, "endpoints": list(CMD_MAP) + ["publish", "publish-due", "mcp", "queue", "health", "brand", "social"]})
+            return self._reply(200, {"ok": True, "endpoints": list(CMD_MAP) + ["activity", "publish", "publish-due", "mcp", "queue", "health", "brand", "social", "brain", "antigravity"]})
         if path == "/" or path == "/app":
             self.send_response(302)
             self.send_header("Location", "/app/")
@@ -246,12 +288,49 @@ class Handler(BaseHTTPRequestHandler):
             return self._social(body)
         if path == "/brand":
             return self._brand(body)
+        if path.startswith("/brain/"):
+            return self._brain_post(path, body)
+        if path == "/antigravity/chat":
+            return self._antigravity_chat(body)
         if path == "/shutdown":
             print("[relay] shutdown requested by the UI")
             self._reply(200, {"ok": True, "stopping": True})
             self.server.shutdown()                                   # type: ignore[attr-defined]
             return
         return self._error(404, "not found")
+
+    MEDIA_DIRS = ("docs", "shots", "data")
+    MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                   ".webp": "image/webp", ".gif": "image/gif"}
+
+    def _activity_media(self):
+        """Thumbnail for an activity entry: an image inside docs/, shots/ or
+        data/ of this app only. <img> cannot send headers, so the token may
+        also come as ?token=."""
+        q = urllib.parse.parse_qs(self.path.partition("?")[2])
+        expected = self.server.token                         # type: ignore[attr-defined]
+        if expected and not (self._token_ok() or secrets.compare_digest((q.get("token") or [""])[0], expected)):
+            return self._error(401, "Invalid or missing X-Nexus-Token")
+        rel = (q.get("path") or [""])[0]
+        try:
+            target = Path(rel) if Path(rel).is_absolute() else ROOT / rel
+            target = target.resolve()
+            relp = target.relative_to(ROOT.resolve())
+        except (ValueError, OSError):
+            return self._error(404, "not found")
+        ctype = self.MEDIA_TYPES.get(target.suffix.lower())
+        if (not ctype or not relp.parts or relp.parts[0] not in self.MEDIA_DIRS
+                or any(part.startswith(".") for part in relp.parts) or not target.is_file()):
+            return self._error(404, "not found")
+        data = target.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "max-age=300")
+        self._cors()
+        self.end_headers()
+        self.wfile.write(data)
 
     def _static(self, rel: str):
         """Serve the PWA so a phone can load it from this relay (same origin)."""
@@ -477,10 +556,38 @@ class Handler(BaseHTTPRequestHandler):
                                  "stdout": proc.stdout, "stderr": proc.stderr[-500:]})
 
     def _brand(self, body: dict):
+        action = body.get("action", "list")
+        self._activity_status = None
+        self._brand_inner(body)
+        if action in ("create", "research", "profile", "plan", "save", "delete", "activate", "export"):
+            code = getattr(self, "_activity_status", None) or 0
+            try:
+                import activity_log
+                what = action + (f" → {body['then']}" if action == "research" and body.get("then") else "")
+                activity_log.record(agent="nexus_relay", action=f"brand_{action}", platform="",
+                                    status="ok" if code and code < 400 else "failed",
+                                    content=f"Brand setup: {what} (brand {body.get('brand_id') or 'active'})",
+                                    error=None if code and code < 400 else f"HTTP {code}", source="relay:/brand")
+            except Exception:                                # noqa: BLE001
+                pass
+
+    def _brand_inner(self, body: dict):
         """Brand Setup: create/list/switch brands, research, profile, plan, edit, export."""
         br = brand_module()
         store = br.BrandStore()
         action = body.get("action", "list")
+        client = client_config.load_client()
+        if client.get("lock_brand") and client.get("client_id"):
+            # Client build: exactly one brand, always active.
+            client_config.ensure_client_brand(store)
+            if action == "delete":
+                return self._error(403, f"this Nexus build is locked to {client['business_name']}")
+            if action == "create":       # "Save details" updates the client's own record only
+                body = {**body, "brand": {**(body.get("brand") or {}), "id": client["client_id"],
+                                          "business_name": client["business_name"]}}
+            if body.get("brand_id") not in (None, "", client["client_id"]):
+                return self._error(403, f"this Nexus build is locked to {client['business_name']}")
+            body = {**body, "brand_id": client["client_id"]}
         bid = body.get("brand_id") or store.active()
         try:
             if action == "list":
@@ -529,6 +636,74 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as e:
             return self._error(400, str(e))
 
+    def _sse(self, event: str, data) -> None:
+        self.wfile.write(f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n".encode())
+        self.wfile.flush()
+
+    def _antigravity_chat(self, body: dict):
+        """Google Antigravity brain, streamed as Server-Sent Events.
+
+        POST /antigravity/chat {message, session_id, model?: flash_lite|flash|pro}
+        events: meta {conversation_id,new} · text {text} · done {} · error {error}"""
+        message = str(body.get("message") or "").strip()
+        session_id = str(body.get("session_id") or "").strip()
+        model = body.get("model") or None
+        if not message or not session_id:
+            return self._error(400, "message and session_id are required")
+        if model is not None and model not in antigravity_bridge.MODELS:
+            return self._error(400, f"model must be one of {list(antigravity_bridge.MODELS)}")
+        self._activity_status = 200
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
+        self._cors()
+        self.end_headers()
+        self.close_connection = True
+        try:
+            for ev in antigravity_bridge.chat_stream(message, session_id, model):
+                kind = ev.pop("type", "text")
+                self._sse(kind, ev)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception as e:                               # noqa: BLE001 — reported to the client
+            try:
+                self._sse("error", {"error": str(e), "kind": type(e).__name__})
+            except OSError:
+                pass
+
+    def _brain_post(self, path: str, body: dict):
+        """Sho external brain. Results and approvals need a configured token:
+        with no token, any local process could approve a real post."""
+        strict = path in ("/brain/result", "/brain/approve", "/brain/reject")
+        if strict and not self.server.token:                  # type: ignore[attr-defined]
+            return self._error(401, "set NEXUS_RELAY_TOKEN: /brain/result and /brain/approve are token-protected")
+        try:
+            if path == "/brain/job":
+                bid, prof = brain_bridge.active_brand()
+                job = brain_bridge.create_job(body.get("kind", "generate"), body.get("task") or {},
+                                              brand_id=body.get("brand_id") or bid,
+                                              brand_profile=body.get("brand_profile") or prof,
+                                              timeout_s=body.get("timeout_s"), source="ui")
+                return self._reply(200, {"ok": True, "job": job})
+            if path == "/brain/result":
+                return self._reply(200, {"ok": True, "job": brain_bridge.submit_result(
+                    body.get("id", ""), body.get("result"), by=str(body.get("by") or "agent (relay)")[:60])})
+            if path == "/brain/approve":
+                job = brain_bridge.approve(body.get("id", ""), by="owner (relay)")
+                out = {"ok": True, "job": job}
+                if body.get("publish"):
+                    out["publish"] = brain_bridge.publish_approved(job["id"], dry_run=bool(body.get("dry_run")),
+                                                                   fallback_dry_run=bool(body.get("fallback_dry_run")))
+                return self._reply(200, out)
+            if path == "/brain/reject":
+                return self._reply(200, {"ok": True, "job": brain_bridge.reject(body.get("id", ""),
+                                                                               reason=str(body.get("reason", ""))[:300])})
+        except (ValueError, PermissionError) as e:
+            return self._error(400, str(e))
+        return self._error(404, f"unknown brain endpoint {path}")
+
     def _run_python(self, args: list, timeout: int = 300):
         """Run a skill and return (payload, http_status).
 
@@ -545,7 +720,9 @@ class Handler(BaseHTTPRequestHandler):
         parsed = extract_json(raw)
         if parsed is None:
             return ({"ok": False, "error": proc.stderr[-800:] or raw[-800:] or "no JSON output"}, 500)
-        if proc.returncode != 0 and (not isinstance(parsed, dict) or parsed.get("ok") is not False):
+        if proc.returncode != 0 and isinstance(parsed, dict) and parsed.get("status") == "failed":
+            parsed["ok"] = False             # publish.py: a structured failure keeps its shape
+        elif proc.returncode != 0 and (not isinstance(parsed, dict) or parsed.get("ok") is not False):
             parsed = {"ok": False, "exit": proc.returncode, "result": parsed,
                       "stderr": proc.stderr[-500:]}
         if isinstance(parsed, dict):
@@ -706,7 +883,7 @@ def health_payload(server) -> dict:
         playwright_ok = importlib.util.find_spec("playwright") is not None
     except Exception:
         playwright_ok = False
-    profiles_dir = Path(os.environ.get("NEXUS_PROFILES_DIR") or (LOGS / "profiles"))
+    profiles_dir = client_config.profiles_dir(LOGS / "profiles")
     profiles = sorted(p.name for p in profiles_dir.iterdir() if p.is_dir()) if profiles_dir.is_dir() else []
     return {
         "ok": True, "service": "nexus-relay", "version": VERSION,
@@ -767,7 +944,7 @@ def main() -> int:
         pass
     load_env()
     parser = argparse.ArgumentParser(description="Nexus local relay")
-    parser.add_argument("--port", type=int, default=int(os.environ.get("NEXUS_RELAY_PORT", "8712")))
+    parser.add_argument("--port", type=int, default=client_config.relay_port())
     parser.add_argument("--token", default=os.environ.get("NEXUS_RELAY_TOKEN", ""),
                         help="shared secret required in X-Nexus-Token (mandatory with --lan)")
     parser.add_argument("--generate-token", action="store_true",
@@ -817,6 +994,14 @@ def main() -> int:
 
     scheme = "https" if srv.tls else "http"   # type: ignore[attr-defined]
     print(f"🛠  Nexus relay v{VERSION} on {scheme}://{args.bind}:{args.port}")
+    client = client_config.load_client()
+    if client.get("client_id"):
+        try:
+            client_config.ensure_client_brand(brand_module().BrandStore())
+        except Exception as e:                       # never block startup on brand seeding
+            print(f"⚠️  could not seed client brand: {e}")
+        print(f"    client: {client['business_name']} ({client.get('x_handle') or 'no X handle'})"
+              f"{' · brand locked' if client.get('lock_brand') else ''} · profiles {client_config.profiles_dir(LOGS / 'profiles')}")
     print("    endpoints: /health /queue /browser /publish /publish-due /social /brand /mcp  ·  UI at /app/")
     if args.token:
         print("    auth: X-Nexus-Token required ✔")

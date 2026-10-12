@@ -1,0 +1,20 @@
+# Minimal set to POST (API + browser fallback, incl. CDP attach) — no AI SDKs.
+# Exact pins resolved 2026-10-12 for CPython 3.9 on macOS x86_64 + arm64
+# (all binary wheels; also fine on 3.10–3.13). Install:
+#   python3 -m pip install -r requirements-posting.txt
+playwright==1.60.0
+playwright-stealth==2.0.3      # supports 3.9; only used when Nexus launches its own browser (not in CDP mode)
+python-dotenv==1.2.1
+requests==2.32.5
+pydantic==2.13.5
+# transitive pins (stop pip from backtracking)
+pydantic-core==2.46.5
+annotated-types==0.7.0
+typing-extensions==4.16.0
+typing-inspection==0.4.2
+greenlet==3.2.5
+pyee==13.0.1
+certifi==2026.7.22
+charset-normalizer==3.5.2
+idna==3.20
+urllib3==2.6.3

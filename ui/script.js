@@ -205,6 +205,7 @@ const PAGE_TITLES = {
     accounts: 'Connected Accounts',
     canva: 'Canva Studio',
     logs: 'Agent Logs',
+    activity: 'Agent Activity Log',
     tutorial: 'Tutorial',
 };
 
@@ -235,6 +236,7 @@ function switchPage(pageId) {
     if (pageId === 'analytics') initAnalytics();
     if (pageId === 'trends') fetchTrends();
     if (pageId === 'logs') renderAgentLogs();
+    if (pageId === 'activity') loadActivity();
     if (pageId === 'tutorial') initTutorial();
     if (pageId === 'accounts') { setTimeout(() => { initAccountsPage(); refreshQueueView(); }, 50); }
     if (pageId === 'browser') initBrowserPage();
@@ -1595,17 +1597,19 @@ function applyEngineToUi(engine, { notify = false } = {}) {
     if (window.NexusAI) {
         window.NexusAI.saveConfig({ provider: engine });
     }
-    const names = { antigravity: 'Google Antigravity (agentic handoff)', cloud: 'Cloud APIs', local: 'Local Models (LM Studio / Ollama)', builtin: 'Built-in templates' };
+    const names = { antigravity: 'Google Antigravity (live agent brain)', cloud: 'Cloud APIs', local: 'Local Models (LM Studio / Ollama)', builtin: 'Built-in templates', sho: 'Sho (external agent brain)' };
     if (notify) showToast(`Agent engine: ${names[engine] || engine}`, 'success');
     saveSettings();
 }
 
 document.querySelectorAll('input[name="aiModel"]').forEach(radio => {
-    radio.addEventListener('change', () => applyEngineToUi(radio.value, { notify: true }));
+    radio.addEventListener('change', () => { markEngineChosen(); applyEngineToUi(radio.value, { notify: true }); });
 });
 
 
+function markEngineChosen() { try { localStorage.setItem('nexus_engine_chosen', '1'); } catch { /* private mode */ } }
 document.getElementById('modelSelect')?.addEventListener('change', (e) => {
+    markEngineChosen();
     applyEngineToUi(e.target.value, { notify: true });
 });
 
@@ -1891,7 +1895,9 @@ function copyScheduleCmd() {
    token. The token is stored here and sent as X-Nexus-Token so a
    random website you have open cannot drive your machine.
 ═════════════════════════════════════════════════════════════ */
-const DEFAULT_RELAY_URL = 'http://127.0.0.1:8712';
+// Client build: its own relay port (config/client.json) so it runs beside the main app (8712).
+const NEXUS_CLIENT = (typeof window !== 'undefined' && window.NEXUS_CLIENT) || null;
+const DEFAULT_RELAY_URL = `http://127.0.0.1:${(NEXUS_CLIENT && NEXUS_CLIENT.relay_port) || 8712}`;
 
 /**
  * Where the relay lives.
@@ -1945,6 +1951,74 @@ async function relayCall(path, { method = 'POST', body = null, ms = 30000 } = {}
     }
     return data;
 }
+
+/**
+ * Streaming relay call (Server-Sent Events over a POST). Calls onEvent(event, data)
+ * for each event; resolves when the stream ends. Used by the Antigravity brain.
+ */
+async function relayStream(path, { body = null, onEvent = () => {}, signal = null } = {}) {
+    const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream' };
+    const token = relayToken();
+    if (token) headers['X-Nexus-Token'] = token;
+    const res = await fetch(`${relayUrl()}${path}`, { method: 'POST', headers, body: JSON.stringify(body || {}), signal });
+    if (!res.ok || !res.body) {
+        let data = null;
+        try { data = await res.json(); } catch { data = null; }
+        const err = new Error(data?.error || `relay HTTP ${res.status}`);
+        err.status = res.status;
+        throw err;
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+            const block = buf.slice(0, i); buf = buf.slice(i + 2);
+            let ev = 'message', data = '';
+            for (const line of block.split('\n')) {
+                if (line.startsWith('event:')) ev = line.slice(6).trim();
+                else if (line.startsWith('data:')) data += line.slice(5).trim();
+            }
+            let parsed = data;
+            try { parsed = JSON.parse(data); } catch { /* raw text */ }
+            onEvent(ev, parsed);
+        }
+    }
+}
+if (typeof window !== 'undefined') window.nexusRelayStream = relayStream;
+
+/**
+ * Antigravity brain: model picker + "default when available". If the user never
+ * picked an engine, Antigravity becomes the engine when the relay reports the
+ * app running; otherwise the existing default stays. An explicit choice is never overridden.
+ */
+async function initAntigravityBrain() {
+    const sel = document.getElementById('antigravityModel');
+    const statusEl = document.getElementById('antigravityStatus');
+    if (sel && window.NexusAI) {
+        sel.value = window.NexusAI.config?.antigravityModel || '';
+        sel.addEventListener('change', () => window.NexusAI.saveConfig({ antigravityModel: sel.value }));
+    }
+    let st = null;
+    try { st = await relayCall('/antigravity/status', { method: 'GET', ms: 8000 }); } catch { st = null; }
+    if (statusEl) statusEl.textContent = st ? (st.available ? 'Antigravity app detected — live brain ready.' : st.reason) : 'Relay offline — Antigravity uses the hand-off directive.';
+    // 'local' is only the implicit first-run default, so it does not count as a choice.
+    let flag = null;
+    try { flag = localStorage.getItem('nexus_engine_chosen'); } catch { flag = null; }
+    const explicit = flag === '1' || (flag === null && !!savedAI.provider && savedAI.provider !== 'local');
+    if (!explicit && st?.available && typeof applyEngineToUi === 'function') applyEngineToUi('antigravity');
+}
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { initAntigravityBrain(); });
+    else setTimeout(() => { initAntigravityBrain(); }, 0);
+}
+
+// The AI client's Sho provider talks to the relay through this hook.
+if (typeof window !== 'undefined') window.nexusRelayCall = relayCall;
 
 /** Probe the relay and paint the status chip. Safe to call on every page load. */
 async function checkRelayHealth() {
@@ -4404,6 +4478,31 @@ const BRAND_PLAN_COLS = ['day', 'date', 'platform', 'format', 'pillar', 'idea', 
 const BRAND_EDITABLE = new Set(['platform', 'format', 'pillar', 'idea', 'hook', 'cta', 'status']);
 
 /** "instagram=@acme, x=@acme" → {instagram:'acme', x:'acme'} */
+/** Client build: one hard-wired brand, switcher and create/delete disabled. */
+function applyClientBranding() {
+    if (!NEXUS_CLIENT || !NEXUS_CLIENT.client_id || typeof document === 'undefined') return;
+    if (NEXUS_CLIENT.app_title) document.title = NEXUS_CLIENT.app_title;
+    const tag = document.getElementById('clientTag');
+    if (tag && NEXUS_CLIENT.business_name) tag.textContent = ` · ${NEXUS_CLIENT.business_name}`;
+}
+if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', applyClientBranding);
+    else applyClientBranding();
+}
+
+function brandLocked() { return !!(NEXUS_CLIENT && NEXUS_CLIENT.lock_brand && NEXUS_CLIENT.client_id); }
+
+function applyClientLock() {
+    if (!brandLocked()) return;
+    for (const id of ['brandDeleteBtn', 'brandSwitcher']) { const el = document.getElementById(id); if (el) el.disabled = true; }
+    const name = document.getElementById('brandFormName');
+    if (name) { name.value = NEXUS_CLIENT.business_name; name.readOnly = true; }
+    const site = document.getElementById('brandFormWebsite');
+    if (site && !site.value) site.value = NEXUS_CLIENT.website;
+    const save = document.getElementById('brandSaveBtn');
+    if (save) save.innerHTML = '<i class="ph ph-floppy-disk"></i> Save details';
+}
+
 function parseHandles(text) {
     const out = {};
     String(text || '').split(/[,\n]/).forEach(part => {
@@ -4438,7 +4537,12 @@ async function refreshBrandList() {
     BrandUI.brands = data.brands || [];
     BrandUI.active = data.active || null;
     const sel = document.getElementById('brandSwitcher');
-    if (sel) {
+    if (sel && brandLocked()) {
+        BrandUI.active = NEXUS_CLIENT.client_id;
+        sel.innerHTML = `<option value="${brandEsc(NEXUS_CLIENT.client_id)}" selected>${brandEsc(NEXUS_CLIENT.business_name)}</option>`;
+        sel.disabled = true;
+        sel.title = `This Nexus build is locked to ${NEXUS_CLIENT.business_name}`;
+    } else if (sel) {
         sel.innerHTML = '<option value="">No brand</option>' + BrandUI.brands.map(b =>
             `<option value="${brandEsc(b.id)}"${b.id === BrandUI.active ? ' selected' : ''}>${brandEsc(b.business_name)}</option>`).join('');
     }
@@ -4458,6 +4562,7 @@ async function initBrandPage() {
 }
 
 async function switchBrand(id) {
+    if (brandLocked() && id !== NEXUS_CLIENT.client_id) { showToast(`Locked to ${NEXUS_CLIENT.business_name}`, 'error'); return; }
     try {
         if (id) await brandApi({ action: 'activate', brand_id: id }, 8000);
         BrandUI.active = id || null;
@@ -4596,6 +4701,7 @@ function renderBrandPage() {
     fill('brandFormName', brand.business_name); fill('brandFormWebsite', brand.website); fill('brandFormGbp', brand.gbp_url);
     fill('brandFormHandles', Object.entries(brand.handles || {}).map(([k, v]) => `${k}=@${v}`).join(', '));
     fill('brandFormLocation', brand.location); fill('brandFormMarket', brand.target_market);
+    applyClientLock();
     const r = b?.research;
     set('brandResearchSummary', r ? `Research: ${(r.pages || []).length} page(s) crawled${r.crawl?.error ? ` (${r.crawl.error})` : ""}, Google profile via ${r.gbp?.source || "n/a"}${r.gbp?.ok === false ? " (failed)" : ""}` +
         `${r.gbp?.rating ? ` (${r.gbp.rating}★, ${r.gbp.review_count || 0} reviews)` : ''} · ${r.researched_at || ''}` : '');
@@ -4614,6 +4720,83 @@ function renderBrandPage() {
         `<td data-col="${c}"${BRAND_EDITABLE.has(c) ? ' contenteditable="true"' : ''}>${brandEsc(item[c])}</td>`).join('') + '</tr>').join('');
 }
 
+// ── Saved links (link memory) ───────────────────────────────────────────────
+function renderSavedLinksHtml(data) {
+    const plats = data?.platforms || {};
+    const names = Object.keys(plats);
+    if (!names.length) return 'No saved links yet. They appear after the first browser check or post.';
+    const safeUrl = u => /^https:\/\//.test(u || '') ? u : '#';
+    return names.map(p => `<h4>${brandEsc(p)}</h4><ul>` + plats[p].map(l =>
+        `<li><span class="chip">${brandEsc(l.kind)}</span> <a href="${brandEsc(safeUrl(l.url))}" target="_blank" rel="noopener noreferrer">${brandEsc(l.url)}</a>` +
+        `${l.source === 'config' ? ' <em>(config)</em>' : ` <small>${brandEsc(l.last_seen || '')}${l.count > 1 ? ` · ×${l.count}` : ''}</small>`}</li>`).join('') + '</ul>').join('');
+}
+
+async function loadSavedLinks() {
+    const el = document.getElementById('brandLinksList');
+    if (!el) return;
+    try {
+        el.innerHTML = renderSavedLinksHtml(await relayCall('/links', { method: 'GET', ms: 8000 }));
+    } catch (e) {
+        el.textContent = `Relay unavailable (${e.message}). Start the relay to see saved links.`;
+    }
+}
+if (typeof window !== 'undefined') window.loadSavedLinks = loadSavedLinks;
+
 // Populate the switcher and load the active profile into generation on startup.
-document.addEventListener('DOMContentLoaded', () => { setTimeout(() => { initBrandPage().catch(() => {}); }, 400); });
-window.__nexusBrand = { state: BrandUI, parseHandles, collectPlanEdits, renderBrandProfileHtml, renderBrandPage };
+document.addEventListener('DOMContentLoaded', () => { setTimeout(() => { initBrandPage().catch(() => {}); loadSavedLinks(); }, 400); });
+window.__nexusBrand = { state: BrandUI, parseHandles, collectPlanEdits, renderBrandProfileHtml, renderBrandPage, renderSavedLinksHtml };
+
+// ── Activity log (relay GET /activity, persistent JSONL per brand) ─────────
+const ACTIVITY_STATUS = { ok: ['✅', 'Posted'], failed: ['❌', 'Failed'], blocked: ['⛔', 'Blocked'], dry_run: ['🧪', 'Dry run'] };
+function activityEsc(v) {
+    return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function activityTime(ts) {
+    const d = new Date(ts);
+    if (isNaN(d)) return String(ts || '');
+    try { return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) + ' IST'; }
+    catch { return d.toISOString(); }
+}
+function renderActivityHtml(data, mediaUrl) {
+    const items = data?.entries || [];
+    if (!items.length) return 'No activity yet. Entries appear after the first browser check or post.';
+    const safeUrl = u => /^https:\/\//.test(u || '') ? u : '#';
+    const img = /\.(png|jpe?g|webp|gif)$/i;
+    return items.map(e => {
+        const [icon, word] = ACTIVITY_STATUS[e.status] || ['•', e.status || '?'];
+        const media = (e.media || []).filter(m => img.test(m)).map(m =>
+            `<a href="${activityEsc(mediaUrl(m))}" target="_blank" rel="noopener"><img class="activity-thumb" loading="lazy" alt="media" src="${activityEsc(mediaUrl(m))}" style="max-width:96px;max-height:120px;border-radius:6px;"></a>`).join(' ');
+        const link = e.permalink ? `<a href="${activityEsc(safeUrl(e.permalink))}" target="_blank" rel="noopener noreferrer">${activityEsc(e.permalink)}</a>` : '';
+        return `<div class="activity-item activity-${activityEsc(e.status)}" style="border-bottom:1px solid rgba(255,255,255,.08);padding:12px 0;display:flex;gap:12px;">` +
+            `<div style="flex:1;min-width:0;">` +
+            `<div><strong>${icon} ${activityEsc(word)}</strong> · <span class="chip">${activityEsc(e.platform || 'app')}</span> ${activityEsc(e.action || '')}` +
+            ` · <small>${activityEsc(activityTime(e.ts))}${e.approx_time ? ' (approx.)' : ''}</small>` +
+            ` · <small>${activityEsc(e.agent || '')}${e.brain ? ' / ' + activityEsc(e.brain) : ''}</small></div>` +
+            (e.label ? `<div><em>${activityEsc(e.label)}</em></div>` : '') +
+            (e.content ? `<div style="white-space:pre-wrap;margin:6px 0;">${activityEsc(e.content)}</div>` : '') +
+            (link ? `<div>🔗 ${link}</div>` : '') +
+            (e.error ? `<div style="color:#f87171;"><small>${activityEsc(String(e.error).slice(0, 300))}</small></div>` : '') +
+            (e.note ? `<div><small>${activityEsc(e.note)}</small></div>` : '') +
+            `</div>${media ? `<div>${media}</div>` : ''}</div>`;
+    }).join('');
+}
+async function loadActivity() {
+    const el = document.getElementById('activityList');
+    if (!el) return;
+    const plat = document.getElementById('activityPlatform')?.value || '';
+    const st = document.getElementById('activityStatus')?.value || '';
+    const qs = new URLSearchParams({ limit: '300' });
+    if (plat) qs.set('platform', plat);
+    if (st) qs.set('status', st);
+    try {
+        const data = await relayCall(`/activity?${qs}`, { method: 'GET', ms: 8000 });
+        const token = relayToken();
+        const mediaUrl = m => `${relayUrl()}/activity/media?path=${encodeURIComponent(m)}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+        el.innerHTML = renderActivityHtml(data, mediaUrl);
+        const stats = document.getElementById('activityStats');
+        if (stats) stats.textContent = `${data.total} entr${data.total === 1 ? 'y' : 'ies'} · ${data.path || ''}`;
+    } catch (e) {
+        el.textContent = `Relay unavailable (${e.message}). Start the relay to see the activity log.`;
+    }
+}
+if (typeof window !== 'undefined') { window.loadActivity = loadActivity; window.__nexusActivity = { renderActivityHtml }; }

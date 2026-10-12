@@ -458,6 +458,100 @@ await test('handle parsing and plan-table edits (only editable columns change)',
     assert.equal(plan.calendar[0].idea, 'old', 'original plan must not be mutated');
 });
 
+
+/* ══════════════════════════════════════════════════════════════════════════
+   SHO EXTERNAL BRAIN
+   ══════════════════════════════════════════════════════════════════════════ */
+console.log('\nSho provider');
+
+await test('sho is registered as a brain provider and offered in Settings + top bar', async () => {
+    assert.equal(NexusProviders.sho.kind, 'brain');
+    assert.ok(!NexusAI.listProviders('cloud').some(p => p.id === 'sho'));
+    const fs = await import('node:fs');
+    const html = fs.readFileSync(path.join(uiDir, 'index.html'), 'utf8');
+    assert.match(html, /<option value="sho">/);
+    assert.match(html, /name="aiModel" value="sho"/);
+});
+
+await test('shoResultText handles string, {text} and {content:{platform}}', () => {
+    const { shoResultText } = __nexusInternals;
+    assert.equal(shoResultText({ result: ' hi ' }, 'x'), 'hi');
+    assert.equal(shoResultText({ result: { text: 'a' } }, 'x'), 'a');
+    assert.equal(shoResultText({ result: { content: { x: 'X!', instagram: 'IG' } } }, 'instagram'), 'IG');
+});
+
+await test('generate() with sho creates a job, polls until answered and applies brand guardrails', async () => {
+    const calls = [];
+    let polls = 0;
+    globalThis.nexusRelayCall = async (p, opts = {}) => {
+        calls.push([p, opts.method || 'POST', opts.body]);
+        if (p === '/brain/job') return { ok: true, job: { id: 'job-123456', status: 'pending' } };
+        polls++;
+        return { ok: true, job: polls < 3 ? { status: 'pending' }
+                                           : { status: 'answered', result: { content: { x: 'Cheap burgers 🍔' } } } };
+    };
+    NexusAI.saveConfig({ provider: 'sho', brainPollMs: 1, brainTimeoutMs: 5000 });
+    NexusAI.setBrandProfile({ business_name: 'Acmebites', brand_voice: { avoid_words: ['cheap'], emoji_policy: 'light' } });
+    const res = await NexusAI.generate({ instruction: 'launch', platforms: ['x'], tone: 'casual', brand: 'Acmebites' });
+    const out = res.x ?? res.results?.x ?? JSON.stringify(res);
+    assert.match(String(out), /\[removed\] burgers/);
+    assert.equal(calls[0][0], '/brain/job');
+    assert.equal(calls[0][2].task.platform, 'x');
+    assert.equal(calls[0][2].brand_profile.business_name, 'Acmebites');
+    assert.equal(polls, 3);
+    NexusAI.setBrandProfile(null);
+    NexusAI.saveConfig({ provider: 'builtin' });
+    delete globalThis.nexusRelayCall;
+});
+
+await test('askSho times out cleanly', async () => {
+    globalThis.nexusRelayCall = async (p) => (p === '/brain/job' ? { job: { id: 'job-timeout' } } : { job: { status: 'pending' } });
+    NexusAI.saveConfig({ brainTimeoutMs: 10 });
+    let t = 0;
+    await assert.rejects(NexusAI.askSho('generate', { platform: 'x' }, { sleep: async () => { t += 20; }, now: () => t }), /timed out/);
+    NexusAI.saveConfig({ brainTimeoutMs: 600000 });
+    delete globalThis.nexusRelayCall;
+});
+
+await test('Activity page renders the relay activity log (escaped, https-only links, thumbnails)', async () => {
+    const fs = await import('node:fs');
+    const js = fs.readFileSync(path.join(uiDir, 'script.js'), 'utf8');
+    const html = fs.readFileSync(path.join(uiDir, 'index.html'), 'utf8');
+    assert.ok(html.includes('data-page="activity"') && html.includes('id="page-activity"') && html.includes('id="activityList"'));
+    assert.ok(js.includes("relayCall(`/activity?${qs}`"));
+    const grab = name => { const i = js.indexOf(`function ${name}(`); const j = js.indexOf('\n}\n', i); return js.slice(i, j + 2); };
+    const statusDecl = js.slice(js.indexOf('const ACTIVITY_STATUS'), js.indexOf('\n', js.indexOf('const ACTIVITY_STATUS')));
+    const r = new Function(`${statusDecl} ${grab('activityEsc')} ${grab('activityTime')} ${grab('renderActivityHtml')} return renderActivityHtml;`)();
+    const out = r({ entries: [
+        { ts: '2026-10-12T20:15:04+00:00', platform: 'instagram', action: 'post', status: 'ok', agent: 'social_browser_agent', brain: 'Sho',
+          content: 'Hi <script>x</script>', media: ['docs/a.png'], permalink: 'https://www.instagram.com/acmebites/p/DeaEWfDE9S7/' },
+        { ts: 't', platform: 'x', status: 'failed', permalink: 'javascript:alert(1)', error: 'boom' }] }, m => `/m?p=${m}`);
+    assert.ok(out.includes('href="https://www.instagram.com/acmebites/p/DeaEWfDE9S7/"'));
+    assert.ok(out.includes('src="/m?p=docs/a.png"'));
+    assert.ok(!out.includes('<script>'));
+    assert.ok(out.includes('href="#"'));
+    assert.ok(out.includes('Posted') && out.includes('Failed') && out.includes('Sho'));
+});
+
+await test('Brand page shows Saved links from the relay (/links), escaped and https-only', async () => {
+    const fs = await import('node:fs');
+    const js = fs.readFileSync(path.join(uiDir, 'script.js'), 'utf8');
+    const html = fs.readFileSync(path.join(uiDir, 'index.html'), 'utf8');
+    assert.ok(html.includes('id="brandLinksList"') && html.includes('loadSavedLinks()'));
+    assert.ok(js.includes("relayCall('/links', { method: 'GET'"));
+    const grab = name => { const i = js.indexOf(`function ${name}(`); const j = js.indexOf('\n}\n', i); return js.slice(i, j + 2); };
+    const r = new Function(`${grab('brandEsc')} ${grab('renderSavedLinksHtml')} return renderSavedLinksHtml;`)();
+    const out = r({ platforms: { facebook: [
+        { url: 'https://www.facebook.com/ACMEBITES', kind: 'page', source: 'config' },
+        { url: 'javascript:alert(1)', kind: 'post', source: 'visited', last_seen: 't', count: 2 },
+        { url: 'https://x.com/a?<b>', kind: 'other', source: 'visited' }] } });
+    assert.ok(out.includes('href="https://www.facebook.com/ACMEBITES"'));
+    assert.ok(out.includes('href="#"'), 'non-https links are not clickable');
+    assert.ok(!out.includes('<b>'));
+    assert.ok(out.includes('×2'));
+    assert.match(r({}), /No saved links yet/);
+});
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

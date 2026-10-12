@@ -12,6 +12,7 @@ Steps
   2. Playwright + a browser channel are available, stealth mode reported
   3. X and Canva persistent profiles are logged in
   4. X composer dry-run (types the text, stops before "Post")
+  4b. Instagram login + composer dry-run, stops before "Share"   (if --ig-media)
   5. Canva export downloads the design            (if --canva-url)
   6. Canva → X dry-run with the export attached    (if --canva-url)
 
@@ -47,13 +48,32 @@ def run(args: list, timeout: int = 600) -> tuple[int, dict, str]:
     return p.returncode, payload, (p.stdout + p.stderr)
 
 
+def cdp_probe(url: str, timeout: float = 5.0) -> tuple[bool, str]:
+    """GET <cdp>/json/version: proves a debuggable Chrome is listening."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url.rstrip("/") + "/json/version", timeout=timeout) as r:
+            info = json.loads(r.read().decode("utf-8", "replace"))
+        return True, str(info.get("Browser", "chrome"))
+    except Exception as e:                                       # noqa: BLE001
+        return False, (f"nothing answering at {url} ({e}). Start Chrome with --remote-debugging-port, "
+                       f"or pass --cdp-url off")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--canva-url", default=os.environ.get("NEXUS_E2E_CANVA_URL", ""))
     ap.add_argument("--text", default="Nexus e2e dry-run — this is never posted.")
     ap.add_argument("--headed", action="store_true")
     ap.add_argument("--skip-logins", action="store_true")
+    ap.add_argument("--ig-media", default=os.environ.get("NEXUS_E2E_IG_MEDIA", ""),
+                    help="image for the Instagram dry-run (also checks the Instagram login)")
+    ap.add_argument("--cdp-url", default=None,
+                    help="attach to a running Chrome (e.g. http://127.0.0.1:9222); 'off' = launch. "
+                         "Default: NEXUS_CDP_URL, then config/client.json")
     a = ap.parse_args()
+    if a.cdp_url is not None:
+        os.environ["NEXUS_CDP_URL"] = a.cdp_url        # every child process below inherits it
 
     social = [str(AGENT / "social_browser_agent.py")] + (["--headed"] if a.headed else [])
     steps: list[tuple[str, bool, str]] = []
@@ -70,11 +90,17 @@ def main() -> int:
     try:
         import importlib.util
         has_pw = importlib.util.find_spec("playwright") is not None
-        from browser_core import detect_channel, load_stealth
-        st = load_stealth()
-        step("playwright installed", has_pw, "pip install -r requirements.txt" if not has_pw else "")
-        step("browser channel", True, detect_channel() or "bundled chromium (run: playwright install chromium)")
-        step("stealth", st.mode != "none", f"{st.mode}: {st.reason}")
+        from browser_core import detect_channel, load_stealth, resolve_cdp_url
+        step("playwright installed", has_pw, "pip install -r requirements-posting.txt" if not has_pw else "")
+        cdp = resolve_cdp_url()
+        if cdp:
+            ok, detail = cdp_probe(cdp)
+            step(f"attach to running Chrome at {cdp}", ok, detail)
+            print("· stealth/UA overrides skipped in attach mode (it is your own Chrome)")
+        else:
+            st = load_stealth()
+            step("browser channel", True, detect_channel() or "bundled chromium (run: playwright install chromium)")
+            step("stealth", st.mode != "none", f"{st.mode}: {st.reason}")
     except Exception as e:                                       # noqa: BLE001
         step("browser environment", False, str(e))
         has_pw = False
@@ -82,13 +108,23 @@ def main() -> int:
         return 1
 
     if not a.skip_logins:
-        code, payload, _ = run([*social, "check_logins", "--platforms", "x,canva" if a.canva_url else "x"])
+        plats = ["x"] + (["canva"] if a.canva_url else []) + (["instagram"] if a.ig_media else [])
+        code, payload, _ = run([*social, "check_logins", "--platforms", ",".join(plats)])
         for r in payload.get("results", []):
             step(f"logged in: {r['platform']}", r.get("logged_in", False), r.get("message", "").splitlines()[0] if r.get("message") else "")
 
     code, payload, _ = run([*social, "x_post", "--text", a.text, "--dry-run"])
-    step("X composer dry-run", code == 0 and payload.get("dry_run") is True,
-         payload.get("screenshot") or payload.get("error", ""))
+    ok = code == 0 and payload.get("dry_run") is True
+    step("X composer dry-run", ok,
+         payload.get("screenshot", "") if ok else payload.get("error") or payload.get("screenshot", ""))
+
+    if a.ig_media:
+        code, payload, _ = run([*social, "ig_post", "--caption", a.text, "--media", a.ig_media, "--dry-run"])
+        ok = code == 0 and payload.get("dry_run") is True
+        step("Instagram composer dry-run (stops before Share)", ok,
+             payload.get("screenshot", "") if ok else payload.get("error") or payload.get("screenshot", ""))
+    else:
+        print("· Instagram steps skipped (pass --ig-media <image> or set NEXUS_E2E_IG_MEDIA)")
 
     if a.canva_url:
         code, payload, _ = run([*social, "canva_export", "--design-url", a.canva_url])

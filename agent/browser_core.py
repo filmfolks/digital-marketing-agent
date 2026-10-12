@@ -38,7 +38,12 @@ from typing import Callable, Iterable
 
 ROOT = Path(__file__).resolve().parent.parent
 LOGS = ROOT / "logs"
-PROFILES_DIR = Path(os.environ.get("NEXUS_PROFILES_DIR") or (LOGS / "profiles"))
+try:                                    # client build: profiles pinned inside this folder
+    import client_config as _client
+    PROFILES_DIR = _client.profiles_dir(LOGS / "profiles")
+except ImportError:
+    _client = None
+    PROFILES_DIR = Path(os.environ.get("NEXUS_PROFILES_DIR") or (LOGS / "profiles"))
 SHOTS_DIR = ROOT / "shots"
 DOWNLOADS_DIR = ROOT / "output" / "downloads"
 
@@ -280,7 +285,13 @@ LOGGED_OUT_PROBES: dict[str, dict] = {
         "candidates": [Candidate("role", "button", "Log in"), Candidate("role", "link", "Log in"),
                        Candidate("role", "button", "Sign up")],
     },
-    "instagram": {"url_markers": ["/accounts/login"], "candidates": [Candidate("css", "input[name='username']")]},
+    # The logged-out landing page changes often (2026: a Meta sign-up form with no
+    # username field and no /accounts/login URL), so check several signs.
+    "instagram": {"url_markers": ["/accounts/login", "/accounts/emailsignup", "/accounts/signup"],
+                  "candidates": [Candidate("css", "input[name='username']"),
+                                 Candidate("text", "Create new account"),
+                                 Candidate("text", "Get started on Instagram"),
+                                 Candidate("role", "button", "Log in")]},
     "facebook": {"url_markers": ["/login"], "candidates": [Candidate("css", "input[name='email']")]},
     "linkedin": {"url_markers": ["/login", "/authwall", "/uas/login"], "candidates": [Candidate("css", "#username")]},
 }
@@ -289,6 +300,12 @@ LOGGED_OUT_PROBES: dict[str, dict] = {
 class LoggedOut(RuntimeError):
     def __init__(self, platform_name: str):
         self.platform = platform_name
+        cdp = resolve_cdp_url()
+        if cdp:
+            super().__init__(
+                f"Not logged in to {platform_name} in the Chrome attached at {cdp}. Log in there by hand "
+                f"(a normal tab in that window), then run this again. Nexus never types passwords.")
+            return
         super().__init__(
             f"Not logged in to {platform_name}. Log in once by hand with:\n"
             f"  python3 agent/social_browser_agent.py login --platform {platform_name}\n"
@@ -369,6 +386,37 @@ def ensure_logged_in(page, platform_name: str) -> None:
         raise LoggedOut(platform_name)
 
 
+# ── CDP attach mode ─────────────────────────────────────────────────────────
+_CDP_OFF = {"", "0", "off", "no", "none", "false", "launch"}
+
+
+class CDPUnavailable(RuntimeError):
+    """The Chrome we were told to attach to is not answering."""
+
+
+def resolve_cdp_url(explicit: str | None = None) -> str:
+    """CDP endpoint to attach to, or "" to launch our own browser.
+
+    Precedence: explicit (--cdp-url) > NEXUS_CDP_URL > client.json "cdp_url".
+    "off"/"0"/"" disables attach mode; a bare port means 127.0.0.1:<port>."""
+    v = explicit
+    if v is None:
+        v = os.environ.get("NEXUS_CDP_URL") or None      # empty (e.g. "NEXUS_CDP_URL=" in .env) = unset
+    if v is None and _client is not None:
+        try:
+            v = _client.load_client().get("cdp_url")
+        except Exception:                                    # noqa: BLE001
+            v = None
+    v = str(v or "").strip()
+    if v.lower() in _CDP_OFF:
+        return ""
+    if v.isdigit():
+        v = f"http://127.0.0.1:{v}"
+    elif "://" not in v:
+        v = "http://" + v
+    return v.rstrip("/")
+
+
 # ── session ─────────────────────────────────────────────────────────────────
 @dataclass
 class BrowserSession:
@@ -380,6 +428,10 @@ class BrowserSession:
     ctx: object = None
     page: object = None
     downloads: Path = field(default_factory=lambda: DOWNLOADS_DIR)
+    # Attach mode: None = resolve from --cdp-url/NEXUS_CDP_URL/client.json; "" = force launch.
+    cdp_url: str | None = None
+    browser: object = None
+    attached: bool = False
 
     def launch_kwargs(self) -> dict:
         kw: dict = {
@@ -403,6 +455,14 @@ class BrowserSession:
 
     def __enter__(self) -> "BrowserSession":
         from playwright.sync_api import sync_playwright
+        url = resolve_cdp_url(self.cdp_url)
+        if url:
+            self.pw = sync_playwright().start()
+            try:
+                return self._attach(url)
+            except BaseException:
+                self._stop_driver()
+                raise
         self.channel = self.channel if self.channel is not None else detect_channel()
         self.stealth = self.stealth or load_stealth()
         if self.stealth.mode == "none":
@@ -431,6 +491,37 @@ class BrowserSession:
                   headless=self.headless, stealth=self.stealth.mode)
         return self
 
+    def _attach(self, url: str) -> "BrowserSession":
+        """Attach to the owner's running Chrome. Reuse its default (logged-in)
+        context, open ONE new tab, and never touch anything else. No stealth
+        and no UA override: it is a real, headed, user-launched browser."""
+        try:
+            self.browser = self.pw.chromium.connect_over_cdp(url, timeout=15000)
+        except Exception as e:                               # noqa: BLE001
+            raise CDPUnavailable(
+                f"no Chrome answering at {url} ({str(e).splitlines()[0][:160]}). Start Chrome with "
+                f"--remote-debugging-port=<port>, or set NEXUS_CDP_URL=off to launch Nexus's own browser.") from e
+        ctxs = list(getattr(self.browser, "contexts", []) or [])
+        if not ctxs:
+            raise CDPUnavailable(f"Chrome at {url} exposes no browser context to attach to")
+        self.ctx = ctxs[0]
+        self.page = self.ctx.new_page()
+        try:
+            self.page.bring_to_front()
+        except Exception:
+            pass
+        self.attached = True
+        self.cdp_url = url
+        self.stealth = StealthPlan("none", reason="attach mode: real user browser")
+        log_event("browser attached", platform=self.platform, cdp_url=url, tabs=len(self.ctx.pages))
+        return self
+
+    def _stop_driver(self) -> None:
+        try:
+            self.pw and self.pw.stop()
+        except Exception:                                    # noqa: BLE001
+            pass
+
     def _fix_headless_ua(self) -> None:
         try:
             probe = self.ctx.new_page()
@@ -445,6 +536,17 @@ class BrowserSession:
             pass
 
     def __exit__(self, *exc) -> None:
+        if self.attached:
+            # Close only the tab we opened. Never ctx.close()/browser.close():
+            # that is the owner's browser and their other tabs. Stopping the
+            # driver just drops the CDP connection; Chrome keeps running.
+            try:
+                if self.page is not None and not self.page.is_closed():
+                    self.page.close()
+            except Exception:                                # noqa: BLE001
+                pass
+            self._stop_driver()
+            return
         for closer in (getattr(self.ctx, "close", None), getattr(self.pw, "stop", None)):
             try:
                 closer and closer()

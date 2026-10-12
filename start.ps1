@@ -6,13 +6,11 @@ param([switch]$Lan, [switch]$Check)
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
 $py = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path $py)) {
-    Write-Host "-> creating .venv"
-    $boot = if (Get-Command py -ErrorAction SilentlyContinue) { "py" } else { "python" }
-    & $boot -m venv .venv
-    & $py -m pip install -q --upgrade pip
-    & $py -m pip install -q -r requirements.txt
-    & $py -m playwright install chromium
+$venvOk = $false
+if (Test-Path $py) { try { & $py -c "import sys" 2>$null; $venvOk = ($LASTEXITCODE -eq 0) } catch { $venvOk = $false } }
+if (-not $venvOk) {
+    # First run, or a .venv copied from another computer (e.g. a Mac via pendrive): rebuild it here.
+    & (Join-Path $PSScriptRoot "scripts\setup_windows.ps1")
 }
 if (-not (Test-Path ".env") -and (Test-Path ".env.example")) { Copy-Item .env.example .env }
 if ($Check) { & $py agent\nexus_relay.py --check-config; exit $LASTEXITCODE }

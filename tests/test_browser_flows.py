@@ -40,11 +40,31 @@ class FakeLoc:
     def is_disabled(self):
         return bool((self._el() or {}).get("disabled"))
 
-    def click(self):
+    def click(self, **kw):
+        el = self._el() or {}
+        if el.get("blocked"):                       # invisible overlay intercepts the pointer
+            raise RuntimeError("<div> intercepts pointer events")
         self.page.clicks.append(self.key)
+        cb = el.get("on_click")
+        if cb:
+            cb(self.page)
+
+    def focus(self):
+        self.page.focused = self.key
+
+    def evaluate(self, js, *a):
+        if "focus" in js:                          # e => e.focus() (FB lexical editor)
+            self.page.focused = self.key
+        return None
+
+    def dispatch_event(self, name):
+        self.page.clicks.append(f"dispatch:{self.key}")
         cb = (self._el() or {}).get("on_click")
         if cb:
             cb(self.page)
+
+    def get_attribute(self, name):
+        return (self._el() or {}).get(name)
 
     def set_input_files(self, files):
         self.page.uploads.extend(files)
@@ -62,6 +82,15 @@ class FakeKeyboard:
 
     def press(self, k):
         self.page.typed += "\n" if k == "Shift+Enter" else ""
+        self.page.presses.append(k)
+        if k == "Enter" and self.page.focused:      # keyboard activation of the focused element
+            cb = (self.page.elements.get(self.page.focused) or {}).get("on_click")
+            self.page.clicks.append(f"key:{self.page.focused}")
+            if cb:
+                cb(self.page)
+        cb = self.page.on_key.get(k)
+        if cb:
+            cb(self.page)
 
 
 class FakeDownload:
@@ -79,6 +108,20 @@ class FakePage:
         self.url = ""
         self.url_after_goto = url_after_goto
         self.keyboard = FakeKeyboard(self)
+        self.presses, self.focused, self.on_key, self.fronted = [], None, {}, 0
+        self.eval_result = []
+
+    def bring_to_front(self):
+        self.fronted += 1
+
+    def evaluate(self, js):
+        return self.eval_result
+
+    @contextmanager
+    def expect_file_chooser(self, timeout=0):
+        page = self
+        holder = types.SimpleNamespace(value=types.SimpleNamespace(set_files=lambda f: page.uploads.extend(f)))
+        yield holder
 
     def goto(self, url, **kw):
         self.visits.append(url)
@@ -243,11 +286,15 @@ class XFlow(unittest.TestCase):
 
     def test_real_post_clicks_and_confirms(self):
         els = dict(X_OK)
-        els["[data-testid='tweetButton']"] = {"on_click": lambda p: p.elements.__setitem__("text:Your post was sent", {})}
         page = FakePage(els)
+        sent = lambda p: p.elements.__setitem__("text:Your post was sent", {})   # noqa: E731
+        page.on_key = {"Meta+Enter": sent, "Control+Enter": sent}
         r = flows.x_post(page, "hi", pacer=nopace())
         self.assertTrue(r["ok"])
-        self.assertIn("[data-testid='tweetButton']", page.clicks)
+        # Submitted with X's shortcut (the typeahead layer blocks clicking Post), tab in front.
+        self.assertTrue({"Meta+Enter", "Control+Enter"} & set(page.presses))
+        self.assertNotIn("[data-testid='tweetButton']", page.clicks)
+        self.assertGreaterEqual(page.fronted, 1)
 
     def test_media_is_attached(self):
         with tempfile.NamedTemporaryFile(suffix=".png") as f:
@@ -324,6 +371,80 @@ class Logging(unittest.TestCase):
         self.assertEqual(out["platform"], "x")
         self.assertEqual(out["msg"], "hello")
 
+
+
+IG_OK = {
+    "svg[aria-label='Home']": {},
+    "svg[aria-label='New post']": {},
+    "[role='dialog'] input[type='file']": {},
+    "role:button:Next": {},
+    "role:textbox:Write a caption...": {},
+    "role:button:Share": {},
+}
+
+
+class InstagramFlow(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.img = str(Path(self.tmp.name) / "burger.png")
+        Path(self.img).write_bytes(b"\x89PNG fake")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_dry_run_uploads_and_captions_but_never_shares(self):
+        page = FakePage(dict(IG_OK))
+        r = flows.instagram_post(page, "Mini burgers 🍔 #acmebites", [self.img], dry_run=True,
+                                 pacer=nopace(), screenshot=lambda t: f"/s/{t}.png")
+        self.assertTrue(r["dry_run"])
+        self.assertEqual(page.uploads, [self.img])
+        self.assertEqual(page.typed, "Mini burgers 🍔 #acmebites")
+        self.assertEqual(page.clicks.count("role:button:Next"), 2)
+        self.assertNotIn("role:button:Share", page.clicks)
+        self.assertEqual(r["screenshot"], "/s/dryrun.png")
+
+    def test_real_post_needs_confirmation(self):
+        els = dict(IG_OK)
+        els["role:button:Share"] = {"on_click": lambda p: p.elements.__setitem__("text:Your post has been shared.", {})}
+        r = flows.instagram_post(FakePage(els), "hi", [self.img], pacer=nopace())
+        self.assertTrue(r["ok"])
+        with self.assertRaises(flows.FlowError):
+            flows.instagram_post(FakePage(dict(IG_OK)), "hi", [self.img], pacer=nopace())
+
+    def test_logged_out_is_detected_before_anything_is_clicked(self):
+        page = FakePage(dict(IG_OK), url_after_goto="https://www.instagram.com/accounts/login/")
+        with self.assertRaises(core.LoggedOut):
+            flows.instagram_post(page, "hi", [self.img], dry_run=True, pacer=nopace())
+        self.assertEqual(page.clicks, [])
+
+    def test_logged_out_landing_without_login_form_is_not_mistaken_for_logged_in(self):
+        # Regression (live run 2026-10-12): the Meta sign-up page has no username
+        # field; a loose "Create" selector clicked "Create new account".
+        page = FakePage({"text:Create": {}, "text:Get started on Instagram": {}})
+        with self.assertRaises(core.LoggedOut):
+            flows.instagram_post(page, "hi", [self.img], dry_run=True, pacer=nopace())
+        self.assertEqual(page.clicks, [])
+        page = FakePage({"text:Create": {}, "svg[aria-label='New post']": {}})   # no marker, no login hints
+        with self.assertRaises(core.LoggedOut):
+            flows.instagram_post(page, "hi", [self.img], dry_run=True, pacer=nopace())
+        self.assertEqual(page.clicks, [])
+
+    def test_validation(self):
+        with self.assertRaises(flows.FlowError):
+            flows.validate_instagram("text only", [])
+        with self.assertRaises(flows.FlowError):
+            flows.validate_instagram("x" * 2201, [self.img])
+        with self.assertRaises(flows.FlowError):
+            flows.validate_instagram(" ".join(f"#t{i}" for i in range(31)), [self.img])
+        with self.assertRaises(flows.FlowError):
+            flows.validate_instagram("hi", [self.img + ".pdf"])
+
+    def test_publish_routes_instagram_dry_run_to_the_new_flow(self):
+        pub = load_agent("publish")
+        args = pub.browser_args_for("instagram", "cap", self.img, True)
+        self.assertEqual(args[:2], ["--allow-actions", "ig_post"])
+        self.assertIn("--dry-run", args)
+        self.assertIsNone(pub.browser_args_for("instagram", "cap", "", True))
 
 if __name__ == "__main__":
     unittest.main()

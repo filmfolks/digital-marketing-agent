@@ -10,6 +10,18 @@ An enterprise-grade, local-first **Autonomous Digital Marketing & Social Media A
 
 ---
 
+## 🆕 New in this release: brains, posting flows, activity, Windows
+
+Step-by-step guides are in **[docs/tutorials/](docs/tutorials/README.md)**.
+
+- **Brains** ([BRAINS.md](docs/tutorials/BRAINS.md)): Google Antigravity **live bridge** (the relay drives the app's `agentapi` and streams the answer over SSE, `/antigravity/chat`, `/antigravity/status`), LM Studio/Ollama with **Hermes 3**, cloud APIs (including OpenRouter Hermes 4), and **Sho · Grok Bot** as an external brain through the relay job queue (`agent/brain_bridge.py`, `/brain/*`).
+- **Posting flows** ([POSTING.md](docs/tutorials/POSTING.md)): X (Cmd/Ctrl+Enter submit, brings the tab to the front in attach mode), Instagram (Create→Post, crop, permalink scraping), Facebook Page (`fb_post`, posts as the Page). All of them support `--dry-run`. **Nothing is published without your approval.**
+- **Activity log** (`agent/activity_log.py`, the **Activity** page, `GET /activity`) and **link memory** (`agent/link_memory.py`, Brand Setup → Saved links, `GET /links`).
+- **Auto-start** ([AUTOSTART.md](docs/tutorials/AUTOSTART.md)): macOS LaunchAgent (`scripts/install_daemon.sh`, including the Full Disk Access step for folders under ~/Documents) and Windows Task Scheduler (`scripts/install_daemon_windows.ps1`).
+- **Windows / pendrive** ([WINDOWS_PORTABLE.md](docs/tutorials/WINDOWS_PORTABLE.md)): `scripts/make_portable.sh` builds a clean zip, and `scripts/setup_windows.bat` recreates `.venv` on the laptop. Never copy `.venv`.
+- **Client builds**: an optional `config/client.json` (which the main app does not ship) hard-wires one brand, its own relay/CDP ports and profile folder (`agent/client_config.py`, `GET /client`, `ui/client-config.js`).
+- **Python 3.9 Macs**: `scripts/mac_setup_py39.sh` installs the exact pins in `requirements-posting.txt`. CDP attach mode is `--cdp-url` / `NEXUS_CDP_URL`.
+
 ## 🆕 What's new in v3.0
 
 v3.0 fixed the things that made the app look finished while quietly not working, then built the rest of the campaign lifecycle on top.

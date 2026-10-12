@@ -15,6 +15,8 @@ Usage:
   python3 generate_content.py --test
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -79,6 +81,14 @@ def http_get_json(url, timeout=5):
 
 # ── Provider Configurations ──────────────────────────────────────────────────
 PROVIDERS = {
+    # External agent brain: no HTTP call. Requests become job files in
+    # data/brain/inbox and the answer comes back via outbox / POST /brain/result.
+    "sho": {
+        "name": "Sho (external agent brain)",
+        "kind": "brain",
+        "url": "",
+        "default_model": "sho",
+    },
     "lmstudio": {
         "name": "LM Studio (Local)",
         "url": os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1/chat/completions"),
@@ -212,6 +222,13 @@ def load_brand_profile(brand_id=None):
         spec.loader.exec_module(mod)
         store = mod.BrandStore()
         bid = brand_id or store.active()
+        if not bid:                              # client build: fall back to the hard-wired client
+            try:
+                cfg_path = os.environ.get("NEXUS_CLIENT_CONFIG") or os.path.join(root, "config", "client.json")
+                with open(cfg_path, encoding="utf-8") as fh:
+                    bid = json.load(fh).get("client_id") or None
+            except (OSError, ValueError):
+                bid = None
         prof = store.read(bid, "profile") if bid else None
         return (prof, mod.brand_context(prof), mod.brand_guardrails(prof)) if prof else None
     except Exception:
@@ -240,8 +257,36 @@ def apply_brand_guardrails(text, g=None):
     return text
 
 
+def _brain_module():
+    import importlib.util
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    if os.path.join(root, "agent") not in sys.path:
+        sys.path.insert(0, os.path.join(root, "agent"))
+    spec = importlib.util.spec_from_file_location("brain_bridge", os.path.join(root, "agent", "brain_bridge.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def generate_via_sho(topic, platform, tone, brand, timeout_s=None, **wait_kw):
+    """Hand the request to the Sho brain and wait for its answer (or time out)."""
+    bb = _brain_module()
+    task = {"topic": topic, "platform": platform, "platforms": [platform], "tone": tone, "brand": brand,
+            "brand_context": BRAND_CONTEXT, "guardrails": BRAND_GUARDRAILS}
+    try:
+        job = bb.ask("generate", task, timeout_s=timeout_s, **wait_kw)
+    except TimeoutError as e:
+        return f"⚠️ Error: {e}"
+    r = job.get("result")
+    if isinstance(r, dict) and isinstance(r.get("content"), dict):
+        return str(r["content"].get(platform) or next(iter(r["content"].values()), "")).strip()
+    return bb.result_text(job).strip()
+
+
 def generate_for_platform(topic, platform, tone, brand, provider_key, model_name=None, custom_url=None):
     """Generate content for a single platform using chosen AI harness."""
+    if provider_key == "sho":
+        return generate_via_sho(topic, platform, tone, brand)
     cfg = PROVIDERS.get(provider_key, PROVIDERS["lmstudio"])
     url = normalize_base_url(custom_url, provider_key) if custom_url else cfg["url"]
     
@@ -362,7 +407,7 @@ def main():
                         help="Brand voice tone")
     parser.add_argument("--brand", default="", help="Brand name")
     parser.add_argument("--provider", default=os.getenv("AI_PROVIDER", "auto"),
-                        choices=["auto", "lmstudio", "ollama", "gemini", "groq", "claude",
+                        choices=["auto", "sho", "lmstudio", "ollama", "gemini", "groq", "claude",
                                  "deepseek", "openai", "xai", "openrouter", "qwen"],
                         help="AI provider harness")
     parser.add_argument("--model", default=None, help="Specific model name (e.g. hermes-3-llama-3.1-8b, gemini-2.0-flash)")

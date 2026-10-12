@@ -6,6 +6,10 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 PY_BOOT="${PYTHON:-python3}"
+if [ -d .venv ] && ! .venv/bin/python -c 'import sys' >/dev/null 2>&1; then
+    echo "→ .venv was made on another machine (or is broken); recreating it"
+    rm -rf .venv
+fi
 if [ ! -x .venv/bin/python ]; then
     echo "→ creating .venv"
     "$PY_BOOT" -m venv .venv

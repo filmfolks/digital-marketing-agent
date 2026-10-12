@@ -317,6 +317,18 @@ class PageParser(HTMLParser):
 
 PRICE_RE = re.compile(r"(?:₹|Rs\.?|INR|\$|USD|€|£)\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:/|per)\s?[a-z]+)?", re.I)
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+PLACEHOLDER_EMAIL_RE = re.compile(r"^(your|you|name|email|user|example|test|john(\.doe)?)@|@(example|domain|email|yourdomain)\.", re.I)
+# Share buttons and links to single posts/videos are not the brand's profile.
+SHARE_LINK_RE = re.compile(r"/(intent|share|sharer|sharer\.php|shareArticle|watch|embed|shorts|status|p|reel)\b|/send$", re.I)
+
+
+def cf_decode_email(hexstr: str) -> str:
+    """Decode Cloudflare's email obfuscation (/cdn-cgi/l/email-protection#<hex>)."""
+    try:
+        key = int(hexstr[:2], 16)
+        return "".join(chr(int(hexstr[i:i + 2], 16) ^ key) for i in range(2, len(hexstr), 2))
+    except ValueError:
+        return ""
 STOP = set("""a an the and or of to in for on with at by from is are be this that it as we our you your us
 i me my they them their will can not no all any more most very just about into over than then so if
 up out get has have had was were been being do does did also how what when where which who why its
@@ -324,7 +336,7 @@ here there home page click read learn contact call now privacy policy terms cook
 reserved copyright menu""".split())
 PAGE_HINTS = {
     "about": ("about", "story", "who-we-are", "team", "company"),
-    "services": ("service", "solution", "what-we-do", "treatment", "offering"),
+    "services": ("service", "solution", "what-we-do", "treatment", "offering", "bulk", "catering", "event"),
     "products": ("product", "shop", "store", "collection", "menu"),
     "pricing": ("pricing", "price", "plans", "packages", "rates", "fees"),
     "contact": ("contact", "location", "find-us", "reach"),
@@ -335,11 +347,46 @@ def classify_page(url: str, title: str) -> str:
     path = urllib.parse.urlsplit(url).path
     if path in ("", "/"):
         return "home"
-    hay = (path + " " + (title or "")).lower()
-    for kind, words in PAGE_HINTS.items():
-        if any(w in hay for w in words):
-            return kind
+    # The path is authoritative. Many site builders reuse one <title> on every
+    # page (real sites do), so consulting the title first mislabels pages.
+    for hay in (path.lower(), (title or "").lower()):
+        for kind, words in PAGE_HINTS.items():
+            if any(w in hay for w in words):
+                return kind
     return "other"
+
+
+def url_template(url: str) -> str:
+    """/menu-item/17 → /menu-item/{n}: groups near-identical catalogue pages."""
+    return re.sub(r"/\d+(?=/|$)", "/{n}", urllib.parse.urlsplit(url).path.rstrip("/") or "/")
+
+
+SAME_TEMPLATE_CAP = 3       # visit at most this many /item/{n} pages before other sections
+
+
+GENERIC_HEADING_RE = re.compile(
+    r"^(what our (customers|clients) say|testimonials?|reviews?|contact( us)?|get in touch.*|faqs?|.*\bfaqs?\b.*|"
+    r"stay connected|follow us|order now!?|related|releted|product detail|menu|home|newsletter|subscribe|"
+    r"quick links|useful links|our (team|story)|about us|blog|latest (news|posts))$", re.I)
+
+
+# Section scaffolding that names a page block rather than something the business sells.
+SECTION_HEADING_RE = re.compile(
+    r"(\?$|^(why|how|what|when|where|who)\b|^let'?s\b|^let us\b|how it works|\b(enquiry|inquiry|enquire|quote)\b|"
+    r"\bpartners?\b|\bfor every occasion\b|\bget started\b|\bour (process|promise|values)\b)", re.I)
+
+
+def is_generic_heading(text: str) -> bool:
+    t = text.strip().rstrip(":")
+    return bool(GENERIC_HEADING_RE.match(t) or SECTION_HEADING_RE.search(t))
+
+
+# Words that describe the website/checkout, not the product: useless as hashtags.
+COMMERCE_STOP = {"order", "orders", "ordering", "online", "track", "tracking", "shipping", "whatsapp", "delivery",
+                 "support", "store", "e-store", "cart", "checkout", "menu", "website", "builder", "mobile-friendly",
+                 "design", "integration", "queries", "confirmation", "easily", "explore", "information", "details",
+                 "experience", "enjoy", "seamless", "offers", "every", "product", "detail", "releted", "related",
+                 "perfect", "contact", "home", "page", "click", "call", "email", "phone", "best", "new", "get"}
 
 
 def parse_page(url: str, html: str) -> dict:
@@ -360,9 +407,18 @@ def parse_page(url: str, html: str) -> dict:
         "paragraphs": p.paragraphs[:30],
         "list_items": p.list_items[:60],
         "prices": sorted(set(m.group(0).strip() for m in PRICE_RE.finditer(text)))[:20],
-        "emails": sorted(set(EMAIL_RE.findall(html or "")))[:5],
+        "emails": sorted({e for e in EMAIL_RE.findall(html or "") if not PLACEHOLDER_EMAIL_RE.search(e)} |
+                         {d for d in (cf_decode_email(h) for h in re.findall(
+                             r"(?:email-protection#|data-cfemail=\")([0-9a-f]{6,})", html or "", re.I))
+                          if EMAIL_RE.fullmatch(d)})[:5],
         "jsonld": p.jsonld[:5],
         "links": p.links,
+        "phones": sorted({urllib.parse.unquote(l[4:]).strip() for l in p.links if l.lower().startswith("tel:")})[:5],
+        "whatsapp": sorted({l.split("?")[0] for l in p.links if re.match(r"https?://(wa\.me|api\.whatsapp\.com)/", l, re.I)
+                            and not SHARE_LINK_RE.search(l.split("?")[0])})[:3],
+        "social": sorted({l.split("?")[0].rstrip("/") for l in p.links if re.match(
+            r"https?://(www\.)?(instagram\.com|facebook\.com|x\.com|twitter\.com|linkedin\.com|youtube\.com)/[^/]", l, re.I)
+            and not SHARE_LINK_RE.search(l.split("?")[0])})[:10],
         "text_chars": len(text),
         "script_count": p.script_count,
     }
@@ -393,8 +449,12 @@ def canonical(url: str) -> str:
     return urllib.parse.urlunsplit((s.scheme.lower(), netloc, path, s.query, ""))
 
 
+COMMON_PATHS = ("/about", "/contact")
+
+# Infrastructure / transactional paths that never carry brand content.
+SKIP_PATH = re.compile(r"^/(cdn-cgi|wp-admin|wp-json|cart|checkout|login|logout|register|account|my-account)(/|$)", re.I)
 SKIP_EXT = re.compile(r"\.(jpg|jpeg|png|gif|webp|svg|pdf|zip|mp4|mp3|css|js|ico|xml|woff2?|json)$", re.I)
-PRIORITY = {"home": 0, "about": 1, "services": 1, "products": 1, "pricing": 1, "contact": 2}
+PRIORITY = {"home": 0, "about": 1, "services": 1, "products": 1, "pricing": 1, "contact": 1}
 
 
 def crawl_site(start_url: str, *, max_pages: int = MAX_PAGES, fetch: Callable = http_fetch,
@@ -424,7 +484,9 @@ def crawl_site(start_url: str, *, max_pages: int = MAX_PAGES, fetch: Callable = 
     skipped: list = []
     rendered = 0
     while queue and len(pages) < max_pages:
-        queue.sort(key=lambda u: PRIORITY.get(classify_page(u, ""), 5))
+        done = Counter(url_template(p["url"]) for p in pages)
+        queue.sort(key=lambda u: (done[url_template(u)] >= SAME_TEMPLATE_CAP,
+                                  PRIORITY.get(classify_page(u, ""), 5)))
         url = queue.pop(0)
         if not rp.can_fetch(USER_AGENT, url):
             skipped.append({"url": url, "reason": "robots.txt"})
@@ -440,6 +502,9 @@ def crawl_site(start_url: str, *, max_pages: int = MAX_PAGES, fetch: Callable = 
         if not same_site(final, start_url):
             skipped.append({"url": url, "reason": "redirected off-site"})
             continue
+        if canonical(final) != canonical(url) and any(canonical(p["url"]) == canonical(final) for p in pages):
+            skipped.append({"url": url, "reason": f"redirects to already-crawled {final}"})
+            continue
         page = parse_page(final, res.get("text") or "")
         if render and looks_like_js_shell(page) and rendered < 5:
             html = render(final)
@@ -449,13 +514,23 @@ def crawl_site(start_url: str, *, max_pages: int = MAX_PAGES, fetch: Callable = 
                 rendered += 1
         links = page.pop("links")
         pages.append(page)
+        if len(pages) == 1:
+            # Probe the usual About/Contact URLs once the site itself answered:
+            # some sites have these pages but no live link to
+            # them. A 404 just lands in "skipped".
+            root = f"{base.scheme}://{base.netloc}"
+            for c in COMMON_PATHS:
+                if canonical(root + c) not in seen:
+                    seen.add(canonical(root + c))
+                    queue.append(canonical(root + c))
         for href in links:
             if href.startswith(("mailto:", "tel:", "javascript:", "#", "data:")):
                 continue
             absu = canonical(urllib.parse.urljoin(final, href))
             if not absu.startswith(("http://", "https://")) or absu in seen:
                 continue
-            if not same_site(absu, start_url) or SKIP_EXT.search(urllib.parse.urlsplit(absu).path):
+            path = urllib.parse.urlsplit(absu).path
+            if not same_site(absu, start_url) or SKIP_EXT.search(path) or SKIP_PATH.search(path):
                 continue
             seen.add(absu)
             queue.append(absu)
@@ -494,7 +569,8 @@ def summarize_site(crawl: dict) -> dict:
             bigrams.update(" ".join(pair) for pair in zip(toks, toks[1:]))
     service_like = []
     for p in by_kind.get("services", []) + by_kind.get("products", []) + by_kind.get("home", []):
-        service_like += [h["text"] for h in p["headings"] if h["level"] in ("h2", "h3") and len(h["text"]) < 70]
+        service_like += [h["text"] for h in p["headings"]
+                         if h["level"] in ("h2", "h3") and len(h["text"]) < 70 and not is_generic_heading(h["text"])]
     usp_re = re.compile(r"\b(free|certified|years?|award|guarantee|trusted|expert|fast|same[- ]day|24/7|"
                         r"warranty|licensed|experience|rated|best)\b", re.I)
     usp_hints = [li for p in pages for li in p["list_items"] + p["paragraphs"][:3] if usp_re.search(li) and len(li) < 160]
@@ -519,8 +595,13 @@ def summarize_site(crawl: dict) -> dict:
         "usp_candidates": list(dict.fromkeys(usp_hints))[:15],
         "pricing_hints": sorted({x for p in pages for x in p["prices"]})[:20],
         "about_text": " ".join(" ".join(p["paragraphs"][:4]) for p in by_kind.get("about", []))[:1500],
-        "contact": {"emails": sorted({e for p in pages for e in p["emails"]})[:5], **org},
-        "sample_copy": [para for p in pages[:6] for para in p["paragraphs"][:2]][:12],
+        "contact": {"emails": sorted({e for p in pages for e in p["emails"]})[:5],
+                    "phones": sorted({x for p in pages for x in p.get("phones", [])})[:5],
+                    "whatsapp": sorted({x for p in pages for x in p.get("whatsapp", [])})[:3],
+                    "social": sorted({x for p in pages for x in p.get("social", [])})[:10], **org},
+        "sample_copy": list(dict.fromkeys(
+            para for p in pages for para in p["paragraphs"][:4]
+            if not re.match(r"^(©|\(c\)|copyright|all rights reserved|email:|phone:)", para.strip(), re.I)))[:12],
         "language": home.get("lang", ""),
         "pages_by_kind": {k: [p["url"] for p in v] for k, v in by_kind.items()},
     }
@@ -708,6 +789,20 @@ def _generator_module():
     return mod
 
 
+def sho_llm(system: str, user: str, **wait_kw) -> tuple[str, str]:
+    """Profile/plan via the Sho external brain (job file → answer)."""
+    sys.path.insert(0, str(ROOT / "agent"))
+    import brain_bridge as bb
+    kind = "plan" if system.strip() == PLAN_SYSTEM.strip() else "profile"
+    try:
+        job = bb.ask(kind, {"system": system, "user": user,
+                            "schema_hint": PLAN_SCHEMA_HINT if kind == "plan" else PROFILE_SCHEMA_HINT}, **wait_kw)
+    except TimeoutError as e:
+        raise RuntimeError(str(e)) from e
+    r = job.get("result")
+    return (json.dumps(r, ensure_ascii=False) if isinstance(r, dict) else bb.result_text(job)), "sho:brain"
+
+
 def default_llm(system: str, user: str, *, provider: str | None = None,
                 max_tokens: int = 4000, post: Callable | None = None) -> tuple[str, str]:
     """Call the configured provider chain; returns (text, 'provider:model').
@@ -717,6 +812,8 @@ def default_llm(system: str, user: str, *, provider: str | None = None,
     key = provider or os.environ.get("NEXUS_PROVIDER") or os.environ.get("AI_PROVIDER") or "auto"
     if key in ("auto", ""):
         key = gen.detect_best_provider()
+    if key == "sho":
+        return sho_llm(system, user)
     cfg = gen.PROVIDERS.get(key)
     if not cfg:
         raise RuntimeError(f"unknown provider {key}")
@@ -932,7 +1029,8 @@ def heuristic_profile(brand: dict, research: dict) -> dict:
         ],
         "hashtag_sets": {"branded": [brand_tag],
                          "local": [city_tag, f"{city_tag}business"] if city_tag else [],
-                         "niche": site.get("top_terms", [])[:8], "broad": []},
+                         "niche": [t for t in site.get("top_terms", [])
+                                   if t not in COMMERCE_STOP and t not in brand_tag and len(t) > 3][:8], "broad": []},
         "reputation": {"strengths": themes[:3]},
         "gaps_and_assumptions": ["Generated without an AI provider: personas, value proposition and voice need your review."],
     }
@@ -1001,6 +1099,21 @@ PLAN_SCHEMA_HINT = {
                    "offer": "", "kpi": ""}],
     "weekly_review": ["what to check each week and how to adjust"],
 }
+
+
+def cadence_for(profile_or_brand: dict) -> dict:
+    """Plan only for channels the brand actually has: its handles, plus the blog
+    when there is a website and Google Business when there is a GBP. A brand
+    with no handles gets the generic DEFAULT_CADENCE."""
+    handles = {_platform(k) for k, v in (profile_or_brand.get("handles") or {}).items() if v}
+    if not handles:
+        return dict(DEFAULT_CADENCE)
+    cad = {p: DEFAULT_CADENCE.get(p, 3) or 3 for p in handles}
+    if profile_or_brand.get("website"):
+        cad["blog"] = DEFAULT_CADENCE["blog"]
+    if profile_or_brand.get("gbp_url") or (profile_or_brand.get("gbp") or {}).get("maps_url"):
+        cad["google_business"] = DEFAULT_CADENCE["google_business"]
+    return cad
 
 
 def _platform(p) -> str:
@@ -1113,7 +1226,7 @@ def build_plan(profile: dict, *, start: date | None = None, cadence: dict | None
                llm: Callable | None = None) -> dict:
     llm = llm or default_llm
     start = start or (date.today() + timedelta(days=1))
-    cadence = cadence or dict(DEFAULT_CADENCE)
+    cadence = cadence or cadence_for(profile)
     slim = {k: profile.get(k) for k in ("business_name", "category", "location", "target_market", "services",
                                         "usps", "value_proposition", "personas", "brand_voice",
                                         "content_pillars", "hashtag_sets", "local_seo_keywords", "gbp")}
@@ -1315,6 +1428,7 @@ def run_plan(store: BrandStore, brand_id: str, llm: Callable | None = None, star
     prof = store.read(brand_id, "profile")
     if not prof:
         raise ValueError("generate the brand profile first")
+    cadence = cadence or cadence_for(store.read(brand_id, "brand") or prof)
     plan = build_plan(prof, start=start, cadence=cadence, llm=llm)
     store.write(brand_id, "plan", plan)
     return plan

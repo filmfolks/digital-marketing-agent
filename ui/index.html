@@ -33,7 +33,7 @@
         <nav class="sidebar" id="sidebar">
             <div class="sidebar-logo">
                 <div class="logo-icon"><i class="ph-fill ph-planet"></i></div>
-                <div class="logo-text">Nexus</div>
+                <div class="logo-text">Nexus<span class="client-tag" id="clientTag"></span></div>
                 <button class="sidebar-toggle" id="sidebarToggle"><i class="ph ph-caret-left"></i></button>
             </div>
 
@@ -104,6 +104,9 @@
                 <li class="nav-item" data-page="logs">
                     <a href="#" class="nav-link"><i class="ph ph-warning-octagon"></i><span>Agent Logs</span><div class="nav-badge" id="logErrorBadge" style="background:linear-gradient(135deg,#dc2626,#f97316);display:none">0</div></a>
                 </li>
+                <li class="nav-item" data-page="activity">
+                    <a href="#" class="nav-link"><i class="ph ph-clock-counter-clockwise"></i><span>Activity</span></a>
+                </li>
                 <li class="nav-item" data-page="tutorial">
                     <a href="#" class="nav-link"><i class="ph ph-graduation-cap"></i><span>Tutorial</span></a>
                 </li>
@@ -143,10 +146,11 @@
                     <div class="topbar-model-selector glass-card">
                         <i class="ph ph-cpu"></i>
                         <select id="modelSelect">
-                            <option value="antigravity">Google Antigravity (Agentic)</option>
+                            <option value="antigravity">Google Antigravity (live brain)</option>
                             <option value="cloud">Cloud API (7 providers + fail-over)</option>
-                            <option value="local">Local AI (LM Studio/Ollama)</option>
+                            <option value="local">Local AI (LM Studio/Ollama · Hermes 3)</option>
                             <option value="builtin">Built-in engine (offline, no API)</option>
+                            <option value="sho">Sho · Grok Bot (external agent brain, relay job queue)</option>
                         </select>
                     </div>
                     <button class="icon-btn glass-card" id="notifBtn" type="button" aria-label="Notifications">
@@ -697,6 +701,15 @@
                         <div class="helper-text" id="brandResearchSummary"></div>
                     </div>
 
+                    <div class="glass-card" id="brandLinksCard">
+                        <div class="card-header">
+                            <h3><i class="ph ph-link"></i> Saved links</h3>
+                            <button class="btn btn-ghost" id="brandLinksRefresh" onclick="loadSavedLinks()"><i class="ph ph-arrows-clockwise"></i> Refresh</button>
+                        </div>
+                        <div class="helper-text">Pages the browser flows have visited (profile, compose, Page, post permalinks) plus your brand's social links (Brand Setup handles / brand.json social_links; config/client.json in a client build). Flows open these first.</div>
+                        <div id="brandLinksList" class="brand-links">Not loaded yet.</div>
+                    </div>
+
                     <div class="glass-card">
                         <div class="card-header">
                             <h3><i class="ph ph-identification-card"></i> Brand Profile</h3>
@@ -776,7 +789,24 @@
                                     <input type="radio" name="aiModel" value="antigravity" checked>
                                     <div class="model-card">
                                         <div class="model-icon"><i class="ph-fill ph-magic-wand"></i></div>
-                                        <div><div class="model-name">Google Antigravity</div><div class="model-desc">Runs natively as an Agentic AI. Highly recommended.</div></div>
+                                        <div><div class="model-name">Google Antigravity</div><div class="model-desc">Live agent brain through the running Antigravity app (relay streams the answer). Falls back to the skill hand-off if the app is closed.</div></div>
+                                    </div>
+                                </label>
+                                <div class="form-group" style="margin:6px 0 10px;">
+                                    <label for="antigravityModel" class="helper-text">Antigravity model</label>
+                                    <select id="antigravityModel" class="form-input" aria-label="Antigravity model">
+                                        <option value="">App default</option>
+                                        <option value="flash_lite">Flash Lite</option>
+                                        <option value="flash">Flash</option>
+                                        <option value="pro">Pro</option>
+                                    </select>
+                                    <p class="helper-text" id="antigravityStatus"></p>
+                                </div>
+                                <label class="model-option">
+                                    <input type="radio" name="aiModel" value="sho">
+                                    <div class="model-card">
+                                        <div class="model-icon"><i class="ph-fill ph-brain"></i></div>
+                                        <div><div class="model-name">Sho (external agent brain)</div><div class="model-desc">Requests go to data/brain/inbox via the relay; your agent answers. Posts need your approval.</div></div>
                                     </div>
                                 </label>
                                 <label class="model-option">
@@ -1266,6 +1296,30 @@ var res = $.http.get("http://localhost:8957/brief"); // supergateway bridge</cod
                     </div>
                     <div id="agentLogList" class="agent-log-list"></div>
                     <p style="font-size:.8rem;opacity:.6;margin-top:14px;">Every AI dispatch, provider retry, failover, publish attempt and uncaught runtime error is documented here automatically. Attach the exported JSON when reporting issues.</p>
+                </div>
+            </div>
+
+            <!-- ═══ PAGE: ACTIVITY (persistent agent log from the relay) ═══ -->
+            <div class="page-content" id="page-activity">
+                <div class="glass-card fade-up" style="padding:20px;">
+                    <div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                        <h3><i class="ph ph-clock-counter-clockwise"></i> Agent Activity Log</h3>
+                        <span id="activityStats" style="font-size:.8rem;opacity:.7;"></span>
+                        <span style="flex:1"></span>
+                        <select id="activityPlatform" onchange="loadActivity()">
+                            <option value="">All platforms</option><option value="x">X</option>
+                            <option value="instagram">Instagram</option><option value="facebook">Facebook</option>
+                            <option value="blogger">Blogger</option><option value="canva">Canva</option>
+                        </select>
+                        <select id="activityStatus" onchange="loadActivity()">
+                            <option value="">All results</option><option value="ok">Posted / ok</option>
+                            <option value="failed">Failed</option><option value="blocked">Blocked</option>
+                            <option value="dry_run">Dry run</option>
+                        </select>
+                        <button class="btn btn-ghost btn-sm" onclick="loadActivity()"><i class="ph ph-arrows-clockwise"></i> Refresh</button>
+                    </div>
+                    <p class="helper-text">Every social post and browser action by the agents, newest first, saved on this computer in data/brands/&lt;brand&gt;/activity_log.jsonl. Needs the relay running.</p>
+                    <div id="activityList" class="activity-list">Not loaded yet.</div>
                 </div>
             </div>
 
@@ -2162,6 +2216,7 @@ var res = $.http.get("http://localhost:8957/brief"); // supergateway bridge</cod
     </div>
 
     <div class="toast-container" id="toastContainer"></div>
+    <script src="client-config.js"></script>
     <script src="ai-client.js"></script>
     <script src="script.js"></script>
     <script>

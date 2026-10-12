@@ -41,6 +41,8 @@ SECURITY: only TELEGRAM_CHAT_ID (and any ids in NEXUS_TG_ALLOWLIST comma
 list) may issue commands; everyone else gets a polite refusal that is logged.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import re

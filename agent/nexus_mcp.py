@@ -29,6 +29,8 @@ Run standalone (dev):   python3 agent/nexus_mcp.py --self-test
 Register in a client:   see mcp-config-examples.json in repo root
 """
 
+from __future__ import annotations
+
 import json
 import os
 import subprocess

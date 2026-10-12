@@ -35,5 +35,16 @@ import os as _os  # noqa: E402
 _os.environ.setdefault("NEXUS_BROWSER_FALLBACK", "0")
 _os.environ.setdefault("NEXUS_PACE", "0")
 _os.environ.setdefault("NEXUS_BACKOFF_BASE", "0")
+# The generic suite tests the multi-brand app. The client build's own behaviour
+# (config/client.json) is covered by tests/test_client_build.py, which points
+# NEXUS_CLIENT_CONFIG back at the real file.
+CLIENT_CONFIG = ROOT / "config" / "client.json"
+_os.environ.setdefault("NEXUS_CLIENT_CONFIG", str(ROOT / "tests" / "no-client-config.json"))
+_os.environ.setdefault("NEXUS_BRANDS_DIR", str(ROOT / "logs" / "test-brands-unused"))
 if str(AGENT) not in sys.path:
     sys.path.insert(0, str(AGENT))
+_os.environ.pop("NEXUS_CDP_URL", None)   # attach mode is opt-in per test
+# Tests (and the CLIs they spawn) must never write the real audit/activity logs.
+_os.environ.setdefault("NEXUS_AUDIT_LOG", _os.path.join(__import__("tempfile").mkdtemp(prefix="nexus-audit-"), "browser_audit.jsonl"))
+_os.environ.setdefault("NEXUS_ACTIVITY_LOG", _os.path.join(__import__("tempfile").mkdtemp(prefix="nexus-activity-"), "activity_log.jsonl"))
+_os.environ.setdefault("NEXUS_LINK_MEMORY", _os.path.join(__import__("tempfile").mkdtemp(prefix="nexus-links-"), "link_memory.json"))

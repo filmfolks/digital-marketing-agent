@@ -36,6 +36,8 @@ CLI examples:
   python3 browser_automation.py act --allow-actions --action click --target "button#publish"
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -47,7 +49,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-AUDIT_LOG = ROOT / "logs" / "browser_audit.jsonl"
+AUDIT_LOG = Path(os.environ.get("NEXUS_AUDIT_LOG") or ROOT / "logs" / "browser_audit.jsonl")
 
 # Session state: which page the agent is on, and a persistent browser profile so
 # cookies/logins survive between CLI invocations.
@@ -283,7 +285,11 @@ class PlaywrightEngine:
 # Requires: chrome --remote-debugging-port=9222   (pip install websocket-client)
 # ────────────────────────────────────────────────────────────────
 class CDPEngine:
-    BASE = "http://127.0.0.1:9222"
+    try:
+        import client_config as _client
+        BASE = f"http://127.0.0.1:{_client.cdp_port()}"
+    except ImportError:
+        BASE = "http://127.0.0.1:9222"
 
     def __init__(self):
         import websocket  # pip install websocket-client

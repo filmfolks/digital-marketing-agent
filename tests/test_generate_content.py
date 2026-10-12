@@ -45,6 +45,8 @@ class TestProviderTable(unittest.TestCase):
 
     def test_every_provider_declares_url_and_model(self):
         for name, cfg in expected.PROVIDERS.items():
+            if cfg.get("kind") == "brain":         # Sho: job files, not HTTP (tests/test_brain_bridge.py)
+                continue
             self.assertTrue(cfg.get("url"), name)
             self.assertTrue(cfg.get("default_model"), name)
             if name not in ("lmstudio", "ollama"):

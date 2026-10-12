@@ -7,7 +7,8 @@
  *   • Local   : LM Studio (Hermes/Llama GGUF), Ollama          (OpenAI-compatible)
  *   • Cloud   : Google Gemini, Groq, DeepSeek, Qwen, OpenAI,
  *               xAI Grok, OpenRouter, Anthropic Claude          (native Messages API)
- *   • Agentic : Google Antigravity skill hand-off (no API call)
+ *   • Agentic : Google Antigravity live brain via the relay (POST /antigravity/chat, SSE);
+ *               falls back to the skill hand-off directive when the app/relay is unavailable
  *   • Offline : deterministic built-in copywriting engine (never blocks the user)
  *
  * Engineering guarantees
@@ -84,6 +85,14 @@ const NEXUS_PROVIDERS = {
         keysUrl: 'https://console.anthropic.com/settings/keys',
     },
 
+    /* ── External agent brain ─────────────────────────────────────────────── */
+    // Not an HTTP model: requests become job files via the relay (/brain/job)
+    // and the Sho agent answers them. See agent/brain_bridge.py.
+    sho: {
+        label: 'Sho (external agent brain)', kind: 'brain', needsKey: false,
+        baseUrl: '', model: 'sho',
+    },
+
     /* ── Local ─────────────────────────────────────────────────────────────── */
     lmstudio: {
         label: 'LM Studio (local)', kind: 'local', needsKey: false,
@@ -147,13 +156,65 @@ class AIClient {
         } catch { /* storage full / private mode: keep in memory */ }
     }
 
+    /* ── Sho external brain ────────────────────────────────────────────────── */
+
+    _relay() { return (typeof window !== 'undefined' && window.nexusRelayCall) || null; }
+
+    /** Create a brain job and poll until Sho answers, the timeout passes or the run is cancelled. */
+    async askSho(kind, task, { signal = null, onProgress = null, sleep = (ms) => new Promise(r => setTimeout(r, ms)),
+                               now = () => Date.now() } = {}) {
+        const relay = this._relay();
+        if (!relay) throw new Error('the Sho provider needs the local relay');
+        const created = await relay('/brain/job', { body: { kind, task, brand_profile: this.brandProfile || undefined }, ms: 15000 });
+        const id = created.job.id;
+        const deadline = now() + Number(this.config.brainTimeoutMs || 600000);
+        for (;;) {
+            if (signal?.aborted) throw new Error('cancelled');
+            const { job } = await relay(`/brain/jobs/${encodeURIComponent(id)}`, { method: 'GET', ms: 10000 });
+            if (job.status !== 'pending') return shoResultText(job, task.platform);
+            if (now() >= deadline) throw new Error(`timed out waiting for job ${id}`);
+            if (onProgress) onProgress(`Waiting for Sho (job ${id})…`);
+            await sleep(Number(this.config.brainPollMs || 3000));
+        }
+    }
+
+    /* ── Google Antigravity live brain ─────────────────────────────────────── */
+
+    _relayStream() { return (typeof window !== 'undefined' && window.nexusRelayStream) || null; }
+
+    antigravitySessionId(brand) {
+        return `nexus-${slug(brand || 'brand') || 'brand'}`.slice(0, 120);
+    }
+
+    /** Stream one prompt through the Antigravity bridge; resolves with the full prose. */
+    async askAntigravity(message, { sessionId, signal = null, onProgress = null, onText = null } = {}) {
+        const stream = this._relayStream();
+        if (!stream) throw new Error('the Antigravity brain needs the local relay');
+        const parts = [];
+        let failure = null;
+        await stream('/antigravity/chat', {
+            body: { message, session_id: sessionId, model: this.config.antigravityModel || undefined },
+            signal,
+            onEvent: (ev, data) => {
+                if (ev === 'meta' && onProgress) onProgress(`Antigravity ${data.new ? 'started' : 'continued'} conversation ${String(data.conversation_id).slice(0, 8)}…`);
+                else if (ev === 'text') { parts.push(data.text); if (onText) onText(data.text); }
+                else if (ev === 'error') failure = data.error || 'Antigravity error';
+            },
+        });
+        if (failure && !parts.length) throw new Error(failure);
+        return parts.join('\n\n');
+    }
+
     /* ── configuration ─────────────────────────────────────────────────────── */
 
     loadConfig() {
         let stored = {};
         try { stored = JSON.parse(localStorage.getItem(this.storageKey) || '{}'); } catch { stored = {}; }
         this.config = {
-            provider: 'antigravity',          // antigravity | cloud | local | builtin
+            provider: 'antigravity',          // antigravity | cloud | local | builtin | sho
+            brainTimeoutMs: 600000,           // how long to wait for Sho to answer a job
+            brainPollMs: 3000,
+            antigravityModel: '',             // '' (app default) | flash_lite | flash | pro
             localType: 'lmstudio',
             localUrl: NEXUS_PROVIDERS.lmstudio.baseUrl,
             localModel: NEXUS_PROVIDERS.lmstudio.model,
@@ -426,13 +487,31 @@ class AIClient {
         const engine = overrideConfig?.provider || this.config.provider;
 
         if (engine === 'antigravity') {
-            return {
-                ok: true, provider: 'antigravity',
-                message: 'Google Antigravity mode active — prompts and skill hand-off enabled.',
-            };
+            const relay = this._relay();
+            if (!relay) return { ok: true, provider: 'antigravity', live: false,
+                                 message: 'Relay not loaded — Antigravity falls back to the skill hand-off directive.' };
+            try {
+                const st = await relay('/antigravity/status', { method: 'GET', ms: 8000 });
+                return st.available
+                    ? { ok: true, provider: 'antigravity', live: true, message: 'Google Antigravity is running — live agent brain ready.' }
+                    : { ok: false, provider: 'antigravity', live: false, message: `${st.reason} (falls back to the skill hand-off directive)` };
+            } catch (e) {
+                return { ok: false, provider: 'antigravity', live: false, message: `Relay /antigravity unreachable: ${e.message}` };
+            }
         }
         if (engine === 'builtin') {
             return { ok: true, provider: 'builtin', message: 'Built-in copywriting engine active (no API calls).' };
+        }
+        if (engine === 'sho') {
+            const relay = this._relay();
+            if (!relay) return { ok: false, provider: 'sho', message: 'Sho needs the local relay (not loaded).' };
+            try {
+                const res = await relay('/brain/jobs?status=pending', { method: 'GET', ms: 5000 });
+                return { ok: true, provider: 'sho',
+                         message: `Sho bridge reachable — ${res.jobs.length} job(s) waiting for the agent.` };
+            } catch (e) {
+                return { ok: false, provider: 'sho', message: `Relay /brain unreachable: ${e.message}` };
+            }
         }
 
         if (engine === 'local') {
@@ -598,12 +677,51 @@ FORMAT: clean, copy-paste-ready GitHub-flavoured Markdown with bold section labe
         const results = {};
         const runMeta = { engine: this.config.provider, provider: null, providers: [], pieces: {}, startedAt: new Date().toISOString() };
 
-        // Antigravity is a prompt hand-off, not an API — it never hits the network.
+        // Antigravity: live agent through the relay bridge; the hand-off directive is the fallback.
         if (this.config.provider === 'antigravity') {
+            const guard = this.config.guardrails?.enabled ? mergeBrandGuardrails(this.config.guardrails, this.brandProfile) : null;
+            const sys = this.buildSystemPrompt({ tone, brand, guardrails: guard });
+            let live = !!this._relayStream();
             for (const platform of wanted) {
+                if (live) {
+                    if (onProgress) onProgress(`Asking Google Antigravity to write ${platform}…`);
+                    try {
+                        const prompt = `${sys}\n\n${this.buildUserPrompt({ instruction, platform, tone, brand, contentType, context })}\n\n` +
+                            'Reply with the finished post text only. Do not run tools, edit files or publish anything.';
+                        const text = await this.askAntigravity(prompt, { sessionId: this.antigravitySessionId(brand), signal: run.abort.signal, onProgress });
+                        if (!text.trim()) throw new Error('empty answer');
+                        results[platform] = guard ? applyGuardrails(text, guard).text : text;
+                        runMeta.pieces[platform] = { provider: 'antigravity', ok: true, live: true };
+                        continue;
+                    } catch (e) {
+                        log('warn', 'antigravity', `Antigravity live brain unavailable for ${platform}; using the hand-off directive`, e.message);
+                        live = false;
+                    }
+                }
+
                 if (onProgress) onProgress(`Preparing Antigravity agent directive for ${platform}…`);
                 results[platform] = this.formatAntigravityDirective({ instruction, platform, tone, brand, contentType, context });
                 runMeta.pieces[platform] = { provider: 'antigravity', ok: true };
+            }
+            return this._finishRun(results, runMeta, startedAt, run);
+        }
+
+        // Sho: one job per platform, answered by the external agent.
+        if (this.config.provider === 'sho') {
+            for (const platform of wanted) {
+                if (onProgress) onProgress(`Waiting for Sho to write ${platform}…`);
+                try {
+                    const text = await this.askSho('generate', {
+                        topic: instruction, platform, platforms: [platform], tone, brand, contentType, context,
+                    }, { signal: run.abort.signal, onProgress });
+                    const g = this.config.guardrails?.enabled ? mergeBrandGuardrails(this.config.guardrails, this.brandProfile) : null;
+                    results[platform] = g ? applyGuardrails(text, g).text : text;
+                    runMeta.pieces[platform] = { provider: 'sho', ok: true };
+                } catch (e) {
+                    log('error', 'sho', `Sho job for ${platform} failed`, e.message);
+                    results[platform] = `⚠️ Sho did not answer: ${e.message}`;
+                    runMeta.pieces[platform] = { provider: 'sho', ok: false, error: e.message };
+                }
             }
             return this._finishRun(results, runMeta, startedAt, run);
         }
@@ -738,7 +856,8 @@ FORMAT: clean, copy-paste-ready GitHub-flavoured Markdown with bold section labe
     /* ── display + fallbacks ───────────────────────────────────────────────── */
 
     getDisplayName() {
-        if (this.config.provider === 'antigravity') return 'Google Antigravity (agentic hand-off)';
+        if (this.config.provider === 'antigravity') return `Google Antigravity (live brain${this.config.antigravityModel ? ' — ' + this.config.antigravityModel : ''})`;
+        if (this.config.provider === 'sho') return 'Sho (external agent brain)';
         if (this.config.provider === 'builtin') return 'Built-in copywriting engine';
         if (this.config.provider === 'local') {
             const p = this.getProvider(this.config.localType === 'ollama' ? 'ollama' : 'lmstudio');
@@ -931,6 +1050,16 @@ function brandContextBlock(p, maxChars = 2500) {
     return lines.join('\n').slice(0, maxChars);
 }
 
+/** Text out of a Sho job result: plain string, {text}, or {content: {platform: text}}. */
+function shoResultText(job, platform) {
+    const r = job?.result;
+    if (typeof r === 'string') return r.trim();
+    if (r && typeof r.content === 'object' && r.content) return String(r.content[platform] ?? Object.values(r.content)[0] ?? '').trim();
+    if (r && typeof r.text === 'string') return r.text.trim();
+    if (r && typeof r.content === 'string') return r.content.trim();
+    return r ? JSON.stringify(r) : '';
+}
+
 /** Owner guardrails + the brand's avoid-words and emoji policy (stricter wins). */
 function mergeBrandGuardrails(g, profile) {
     const base = { ...(g || {}) };
@@ -1068,5 +1197,5 @@ window.renderMarkdown = renderMarkdown;
 
 // Deterministic helpers exposed for the automated test-suite (tests/test_ui.mjs).
 // They are pure functions, so exporting them adds no runtime risk.
-window.__nexusInternals = { applyGuardrails, tokenBudgetFor, slug, clamp, httpError, brandContextBlock, mergeBrandGuardrails };
+window.__nexusInternals = { applyGuardrails, tokenBudgetFor, slug, clamp, httpError, brandContextBlock, mergeBrandGuardrails, shoResultText };
 

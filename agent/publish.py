@@ -276,16 +276,16 @@ def browser_args_for(platform: str, text: str, media: str, dry_run: bool) -> lis
     elif platform == "instagram":
         if not local_media:
             return None                    # IG cannot post text-only
-        args = ["instagram_post", "--caption", text, "--image", local_media]
+        args = ["ig_post", "--caption", text, "--media", local_media]
     elif platform == "facebook":
-        args = ["facebook_post", "--message", text]
+        args = ["fb_post", "--text", text]
         if local_media:
-            args += ["--image", local_media]
+            args += ["--media", local_media]
     else:
         return None
     if dry_run:
-        if args[0] != "x_post":
-            return None                    # only the X flow has a true dry-run
+        if args[0] not in ("x_post", "ig_post", "fb_post"):
+            return None                    # only these flows have a true dry-run
         args.append("--dry-run")
     return ["--allow-actions", *args]
 
@@ -481,7 +481,12 @@ def main() -> int:
     parser.add_argument("--no-fallback", action="store_true", help="API only; never use the browser")
     parser.add_argument("--fallback-dry-run", action="store_true",
                         help="real API attempt, but a browser fallback stops before the final Post click")
+    parser.add_argument("--cdp-url", dest="cdp_url", default=None,
+                        help="browser fallback attaches to this running Chrome (e.g. http://127.0.0.1:9222); "
+                             "'off' launches Nexus's own. Default: NEXUS_CDP_URL, then config/client.json")
     args = parser.parse_args()
+    if args.cdp_url is not None:            # inherited by the social_browser_agent subprocess
+        os.environ["NEXUS_CDP_URL"] = args.cdp_url
 
     if args.list:
         items = load_queue()
@@ -502,8 +507,10 @@ def main() -> int:
             job["fallback"] = False
         if args.fallback_dry_run:
             job["browser_dry_run"] = True
-        print(json.dumps(publish_job(job, dry_run=args.dry_run), indent=2))
-        return 0
+        res = publish_job(job, dry_run=args.dry_run)
+        print(json.dumps(res, indent=2))
+        # Scripts and e2e_check need a failing exit status when nothing was published.
+        return 1 if res.get("status") == "failed" else 0
 
     if not args.platform or not args.text:
         parser.error("Provide --platform and --text, or --from-json / --due")
@@ -513,8 +520,10 @@ def main() -> int:
         job["fallback"] = False
     if args.fallback_dry_run:
         job["browser_dry_run"] = True
-    print(json.dumps(publish_job(job, dry_run=args.dry_run), indent=2))
-    return 0
+    res = publish_job(job, dry_run=args.dry_run)
+    print(json.dumps(res, indent=2))
+    # Scripts and e2e_check need a failing exit status when nothing was published.
+    return 1 if res.get("status") == "failed" else 0
 
 
 if __name__ == "__main__":

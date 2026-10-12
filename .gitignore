@@ -85,3 +85,11 @@ npm-debug.log*
 yarn-error.log*
 .pnpm-store/
 data/
+
+# Per-install runtime data (also covered by data/ above when brands live there)
+link_memory.json
+activity_log.jsonl
+# Client builds keep their own config/client.json; the main app ships none
+config/client.json
+# Portable copies
+dist/

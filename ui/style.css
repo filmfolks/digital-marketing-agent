@@ -1261,3 +1261,7 @@ body {
 .brand-plan-table td[contenteditable="true"]:focus { outline: 1px solid var(--accent, #7c5cff); background: rgba(124,92,255,.08); }
 #brandProfileEditor { width: 100%; font-family: ui-monospace, monospace; font-size: .8rem; }
 @media (max-width: 640px) { .brand-switcher { display: none; } }
+
+.brand-links ul{list-style:none;padding:0;margin:.2rem 0 .8rem}
+.brand-links li{padding:.25rem 0;word-break:break-all}
+.brand-links .chip{font-size:.75em;padding:.05rem .45rem;border-radius:999px;background:rgba(251,97,7,.15)}
