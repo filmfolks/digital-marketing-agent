@@ -23,7 +23,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
+import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -33,6 +36,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 QUEUE_FILE = ROOT / "logs" / "publish_queue.json"
 AUDIT = ROOT / "logs" / "publish_audit.jsonl"
+SOCIAL_AGENT = ROOT / "agent" / "social_browser_agent.py"
 
 
 def load_env() -> None:
@@ -53,9 +57,9 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def audit(platform: str, status: str, detail: str) -> None:
+def audit(platform: str, status: str, detail: str, **extra) -> None:
     AUDIT.parent.mkdir(parents=True, exist_ok=True)
-    entry = {"ts": now_iso(), "platform": platform, "status": status, "detail": detail[:400]}
+    entry = {"ts": now_iso(), "platform": platform, "status": status, "detail": detail[:400], **extra}
     with AUDIT.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
@@ -211,10 +215,148 @@ PUBLISHERS = {
     "facebook": post_facebook,
     "instagram": post_instagram,
     "twitter": post_twitter,
+    "x": post_twitter,           # alias — the UI and the browser flow call it "x"
     "linkedin": post_linkedin,
     "blogger": post_blogger,
     "youtube": post_youtube,     # always returns a clear explanatory error
 }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# API-first publishing with retries and an automatic browser fallback
+# ──────────────────────────────────────────────────────────────────────────────
+#
+#   1. Call the official API. Retry transient failures (network error, 429,
+#      5xx) with exponential backoff + jitter.
+#   2. If the API is unusable — missing credentials, auth/permission errors
+#      (4xx) or retries exhausted — hand the post to the browser fallback, which
+#      drives a persistent, already-logged-in profile of YOUR account.
+#   3. The browser route gets its own bounded retries (not for "logged out",
+#      which needs a human).
+#   4. One audit line per platform records the route used and every attempt.
+
+RETRYABLE_STATUS = {0, 408, 425, 429, 500, 502, 503, 504}
+BROWSER_EXIT = {0: "ok", 2: "blocked", 3: "logged_out", 4: "failed", 5: "engine_missing"}
+
+
+def env_flag(name: str, default: bool) -> bool:
+    v = os.environ.get(name)
+    return default if v is None else v.strip().lower() in ("1", "true", "yes", "on")
+
+
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
+def classify_api_failure(res: dict) -> str:
+    """'retry' for transient errors, 'fallback' for everything else."""
+    status = res.get("status")
+    if status is None:                     # never reached the network: missing creds / unsupported
+        return "fallback"
+    return "retry" if status in RETRYABLE_STATUS else "fallback"
+
+
+def backoff_delay(attempt: int, base: float, cap: float = 30.0) -> float:
+    return min(cap, base * (2 ** attempt)) * (0.75 + random.random() * 0.5)
+
+
+def browser_args_for(platform: str, text: str, media: str, dry_run: bool) -> list | None:
+    """Translate a publish job into a social_browser_agent.py invocation, or
+    None when the platform has no browser flow."""
+    local_media = media if media and Path(media).is_file() else ""
+    if platform in ("twitter", "x"):
+        args = ["x_post", "--text", text]
+        if local_media:
+            args += ["--media", local_media]
+        if len(text) > 280 and env_flag("NEXUS_X_LONG_POST", False):
+            args.append("--long-post")
+    elif platform == "instagram":
+        if not local_media:
+            return None                    # IG cannot post text-only
+        args = ["instagram_post", "--caption", text, "--image", local_media]
+    elif platform == "facebook":
+        args = ["facebook_post", "--message", text]
+        if local_media:
+            args += ["--image", local_media]
+    else:
+        return None
+    if dry_run:
+        if args[0] != "x_post":
+            return None                    # only the X flow has a true dry-run
+        args.append("--dry-run")
+    return ["--allow-actions", *args]
+
+
+def run_browser(args: list, timeout: int = 600) -> dict:
+    """Run the browser agent and parse its one-line JSON result."""
+    try:
+        proc = subprocess.run([sys.executable, str(SOCIAL_AGENT), *args], capture_output=True,
+                              text=True, timeout=timeout, cwd=str(ROOT))
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "exit": 4, "error": f"browser fallback timed out after {timeout}s"}
+    payload: dict = {}
+    for line in reversed(proc.stdout.strip().splitlines()):
+        try:
+            payload = json.loads(line)
+            break
+        except json.JSONDecodeError:
+            continue
+    payload.setdefault("ok", proc.returncode == 0)
+    payload["exit"] = proc.returncode
+    if not payload["ok"] and not payload.get("error"):
+        payload["error"] = (proc.stderr or proc.stdout)[-300:]
+    return payload
+
+
+def publish_with_fallback(platform: str, text: str, c: dict, media: str = "", *,
+                          fallback: bool = True, browser_dry_run: bool = False,
+                          api_retries: int | None = None, browser_retries: int | None = None,
+                          backoff_base: float | None = None,
+                          api_call=None, browser_runner=run_browser, sleep=time.sleep) -> dict:
+    api_retries = env_int("NEXUS_API_RETRIES", 2) if api_retries is None else api_retries
+    browser_retries = env_int("NEXUS_BROWSER_RETRIES", 1) if browser_retries is None else browser_retries
+    backoff_base = float(os.environ.get("NEXUS_BACKOFF_BASE", "2")) if backoff_base is None else backoff_base
+    fn = api_call or PUBLISHERS.get(platform)
+    attempts: list = []
+
+    res: dict = {"ok": False, "error": "Unsupported platform"}
+    if fn:
+        for i in range(api_retries + 1):
+            res = dict(fn(text, c, media) or {})
+            attempts.append({"route": "api", "attempt": i + 1, "ok": bool(res.get("ok")),
+                             "status": res.get("status"),
+                             "error": str(res.get("error"))[:200] if not res.get("ok") else None})
+            if res.get("ok"):
+                return {**res, "platform": platform, "route": "api", "attempts": attempts}
+            if classify_api_failure(res) != "retry" or i == api_retries:
+                break
+            sleep(backoff_delay(i, backoff_base))
+
+    api_error = res.get("error")
+    bargs = browser_args_for(platform, text, media, browser_dry_run) if fallback else None
+    if not bargs:
+        why = "browser fallback disabled" if not fallback else "no browser flow for this platform/job"
+        return {"ok": False, "platform": platform, "route": "api", "status": res.get("status"),
+                "error": api_error, "fallback": why, "attempts": attempts}
+
+    bres: dict = {}
+    for i in range(browser_retries + 1):
+        bres = browser_runner(bargs)
+        outcome = BROWSER_EXIT.get(bres.get("exit"), "failed") if not bres.get("ok") else "ok"
+        attempts.append({"route": "browser", "attempt": i + 1, "ok": bool(bres.get("ok")),
+                         "outcome": outcome, "error": None if bres.get("ok") else str(bres.get("error"))[:200],
+                         "screenshot": bres.get("screenshot")})
+        if bres.get("ok") or outcome in ("logged_out", "blocked", "engine_missing") or i == browser_retries:
+            break
+        sleep(backoff_delay(i, backoff_base))
+    return {"ok": bool(bres.get("ok")), "platform": platform, "route": "browser",
+            "dry_run": bool(bres.get("dry_run")) or None, "api_error": api_error,
+            "error": None if bres.get("ok") else bres.get("error"),
+            "logged_out": bool(bres.get("logged_out")) or None,
+            "screenshot": bres.get("screenshot"), "attempts": attempts}
 
 
 def load_queue() -> list:
@@ -228,7 +370,9 @@ def load_queue() -> list:
 
 def save_queue(items: list) -> None:
     QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    QUEUE_FILE.write_text(json.dumps(items, indent=2), encoding="utf-8")
+    tmp = QUEUE_FILE.with_suffix(QUEUE_FILE.suffix + f".tmp{os.getpid()}")
+    tmp.write_text(json.dumps(items, indent=2), encoding="utf-8")
+    os.replace(tmp, QUEUE_FILE)          # atomic: a crash never truncates the queue
 
 
 def enqueue(job: dict) -> dict:
@@ -257,16 +401,20 @@ def publish_job(job: dict, dry_run: bool = False) -> dict:
         if dry_run:
             results.append({"platform": platform, "ok": True, "dry_run": True})
             continue
-        res = fn(text, c, media)
-        res["platform"] = platform
+        res = publish_with_fallback(
+            platform, text, c, media,
+            fallback=job.get("fallback", env_flag("NEXUS_BROWSER_FALLBACK", True)),
+            browser_dry_run=bool(job.get("browser_dry_run")))
+        res = {k: v for k, v in res.items() if v is not None}
         # BUG FIX: the audit line explicitly excluded the `error` field, so
         # logs/publish_audit.jsonl recorded "error" with no reason at all —
         # useless exactly when you need it. Record the reason, never the token.
-        detail = json.dumps({k: v for k, v in res.items() if k != "error"})
+        detail = json.dumps({k: v for k, v in res.items() if k not in ("error", "attempts")}, default=str)
         if not res.get("ok"):
             reason = res.get("error")
             detail = f"{detail} reason={json.dumps(reason, default=str)[:300]}"
-        audit(platform, "ok" if res.get("ok") else "error", detail)
+        audit(platform, "ok" if res.get("ok") else "error", detail,
+              route=res.get("route"), attempts=res.get("attempts", []))
         results.append(res)
     job["results"] = results
     if dry_run:
@@ -329,7 +477,10 @@ def main() -> int:
     parser.add_argument("--from-json", dest="from_json")
     parser.add_argument("--due", action="store_true")
     parser.add_argument("--list", action="store_true", help="Print the publish queue and exit")
-    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--dry-run", action="store_true", help="validate only; no network, no browser")
+    parser.add_argument("--no-fallback", action="store_true", help="API only; never use the browser")
+    parser.add_argument("--fallback-dry-run", action="store_true",
+                        help="real API attempt, but a browser fallback stops before the final Post click")
     args = parser.parse_args()
 
     if args.list:
@@ -347,6 +498,10 @@ def main() -> int:
 
     if args.from_json:
         job = json.loads(Path(args.from_json).read_text(encoding="utf-8"))
+        if args.no_fallback:
+            job["fallback"] = False
+        if args.fallback_dry_run:
+            job["browser_dry_run"] = True
         print(json.dumps(publish_job(job, dry_run=args.dry_run), indent=2))
         return 0
 
@@ -354,6 +509,10 @@ def main() -> int:
         parser.error("Provide --platform and --text, or --from-json / --due")
 
     job = {"platforms": [args.platform], "content": args.text, "media": args.media}
+    if args.no_fallback:
+        job["fallback"] = False
+    if args.fallback_dry_run:
+        job["browser_dry_run"] = True
     print(json.dumps(publish_job(job, dry_run=args.dry_run), indent=2))
     return 0
 

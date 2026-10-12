@@ -28,3 +28,12 @@ def load_module(name: str, path: Path):
 
 def load_agent(name: str):
     return load_module(f"nexus_{name}", AGENT / f"{name}.py")
+
+# Tests must never launch a real browser as a publish fallback, and never sleep
+# for human pacing. Individual tests opt back in with explicit arguments.
+import os as _os  # noqa: E402
+_os.environ.setdefault("NEXUS_BROWSER_FALLBACK", "0")
+_os.environ.setdefault("NEXUS_PACE", "0")
+_os.environ.setdefault("NEXUS_BACKOFF_BASE", "0")
+if str(AGENT) not in sys.path:
+    sys.path.insert(0, str(AGENT))
