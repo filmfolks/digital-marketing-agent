@@ -353,6 +353,19 @@ await test('every inline on*= handler in index.html is defined in script.js', as
     assert.deepEqual(missing, [], `undefined handlers: ${missing.join(', ')}`);
 });
 
+await test('manifest is installable: 192 + 512 PNG icons that exist, and the SW precaches them', async () => {
+    const fs = await import('node:fs');
+    const m = JSON.parse(fs.readFileSync(path.join(uiDir, 'manifest.json'), 'utf8'));
+    for (const k of ['name', 'short_name', 'start_url', 'display', 'scope', 'id']) assert.ok(m[k], `manifest.${k} missing`);
+    const sizes = m.icons.filter(i => i.type === 'image/png').map(i => i.sizes);
+    assert.ok(sizes.includes('192x192') && sizes.includes('512x512'), sizes.join());
+    const sw = fs.readFileSync(path.join(uiDir, 'sw.js'), 'utf8');
+    for (const i of m.icons) {
+        assert.ok(fs.existsSync(path.join(uiDir, i.src)), `${i.src} missing on disk`);
+        assert.ok(sw.includes(`'./${i.src}'`), `${i.src} not precached by sw.js`);
+    }
+});
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

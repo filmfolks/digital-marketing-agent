@@ -1,17 +1,20 @@
 {
+  "id": "./index.html",
   "name": "Nexus Marketing Command Center",
   "short_name": "Nexus",
   "description": "AI digital marketing and social media automation workspace.",
   "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
+  "orientation": "any",
+  "lang": "en",
+  "categories": ["business", "productivity"],
   "background_color": "#0a0a0f",
   "theme_color": "#7c3aed",
   "icons": [
-    {
-      "src": "favicon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any"
-    }
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

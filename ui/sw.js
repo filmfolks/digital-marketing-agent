@@ -19,7 +19,7 @@
  *   non-GET            → pass through (publishing, AI calls, relay)
  */
 
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = `nexus-ui-${VERSION}`;
 const PRECACHE = [
     './',
@@ -29,6 +29,10 @@ const PRECACHE = [
     './ai-client.js',
     './favicon.svg',
     './manifest.json',
+    './icon-192.png',
+    './icon-512.png',
+    './icon-maskable-512.png',
+    './apple-touch-icon.png',
 ];
 
 // Hosts whose responses must never be captured by the cache.
