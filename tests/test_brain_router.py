@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import unittest.mock
 import sys
 import unittest
 from pathlib import Path
@@ -156,3 +157,38 @@ class WireFormatTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AntigravityTransport(unittest.TestCase):
+    def test_tool_json_survives_the_bridge(self):
+        import antigravity_bridge as ag
+        steps = [{"type": "PLANNER_RESPONSE", "status": "DONE", "step_index": 1,
+                  "content": '<tool_call>\n{"name": "list_tasks", "arguments": {}}\n</tool_call>'}]
+        import tempfile, os
+        d = Path(tempfile.mkdtemp())
+        f = d / "t.jsonl"
+        f.write_text("\n".join(json.dumps(s) for s in steps) + "\n")
+        t = [0.0]
+
+        def clock():
+            t[0] += 1
+            return t[0]
+        with unittest.mock.patch.object(ag, "transcript_path", lambda cid: f):
+            raw = [e for e in ag.tail_answer("c", 0, settle=0.5, clock=clock, sleep=lambda s: None, keep_tool_json=True)]
+            cleaned = [e for e in ag.tail_answer("c", 0, settle=0.5, clock=clock, sleep=lambda s: None)]
+        self.assertIn('"list_tasks"', raw[0]["text"])
+        self.assertNotIn('"list_tasks"', cleaned[0]["text"])
+
+    def test_router_uses_raw_antigravity_text(self):
+        import antigravity_bridge as ag
+        seen = {}
+
+        def fake_chat(prompt, session_id, model, **kw):
+            seen.update(kw, prompt=prompt)
+            return {"text": '<tool_call>\n{"name": "list_tasks", "arguments": {}}\n</tool_call>', "conversation_id": "c"}
+        with unittest.mock.patch.object(ag, "chat", fake_chat):
+            r = br.chat([{"role": "user", "content": "x"}], tools=TOOLS, cfg=br.BrainConfig("antigravity"))
+        self.assertTrue(seen["keep_tool_json"])
+        self.assertIn("<tools>", seen["prompt"])
+        self.assertEqual(r["tool_calls"][0]["name"], "list_tasks")
+        self.assertEqual(r["mode"], "hermes")

@@ -461,12 +461,15 @@ def transcript_size(conversation_id: str) -> int:
 
 def tail_answer(conversation_id: str, offset: int = 0, *, timeout: float = DEFAULT_TIMEOUT,
                 settle: float = SETTLE_S, poll: float = POLL_S,
-                sleep: Callable = time.sleep, clock: Callable = time.monotonic) -> Iterator[dict]:
+                sleep: Callable = time.sleep, clock: Callable = time.monotonic,
+                keep_tool_json: bool = False) -> Iterator[dict]:
     """Yield {"type": "text", "text": ...} per finished PLANNER_RESPONSE after ``offset``,
     then {"type": "done"}; raises TimeoutError if nothing completes in time.
 
     Completion: a DONE planner step that has prose and no tool calls, followed by
-    ``settle`` seconds with no new working steps (CHECKPOINT etc. are ignored)."""
+    ``settle`` seconds with no new working steps (CHECKPOINT etc. are ignored).
+    ``keep_tool_json=True`` returns the text untouched (the Nexus brain router parses
+    <tool_call> JSON itself; clean_prose would delete it)."""
     path = transcript_path(conversation_id)
     deadline = clock() + timeout
     final_at = None
@@ -484,7 +487,7 @@ def tail_answer(conversation_id: str, offset: int = 0, *, timeout: float = DEFAU
             if key in seen:
                 continue
             seen.add(key)
-            text = clean_prose(st.get("content") or "")
+            text = (st.get("content") or "").strip() if keep_tool_json else clean_prose(st.get("content") or "")
             if text:
                 yield {"type": "text", "text": text, "step": key}
             final_at = clock() if (text and not st.get("tool_calls")) else None

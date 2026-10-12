@@ -50,7 +50,7 @@ sys.path.insert(0, str(ROOT / "agent"))
 OPENAI_COMPAT = ("openai", "groq", "deepseek", "xai", "openrouter", "gemini", "qwen", "lmstudio", "ollama")
 LOCAL = ("lmstudio", "ollama")
 BRAINS = OPENAI_COMPAT + ("claude", "antigravity", "sho")
-DEFAULT_MODELS = {"lmstudio": "hermes-3-llama-3.1-8b", "ollama": "hermes3:8b", "antigravity": "flash",
+DEFAULT_MODELS = {"lmstudio": "hermes-3-llama-3.1-8b", "ollama": "hermes3:8b", "antigravity": "app-default",
                   "sho": "sho", "openrouter": "nousresearch/hermes-4-405b"}
 
 
@@ -525,7 +525,7 @@ def call_antigravity(cfg: BrainConfig, messages: List[dict], tools, schema, mode
     prompt = ("You are the planning brain for the Nexus marketing app. Do not edit files, run commands or "
               "browse; answer in this chat only.\n\n" + flatten(msgs))
     model = cfg.model if cfg.model in ag.MODELS else None
-    res = ag.chat(prompt, cfg.session_id, model, timeout=cfg.timeout)
+    res = ag.chat(prompt, cfg.session_id, model, timeout=max(cfg.timeout, 300), keep_tool_json=True)
     return {"text": res.get("text", ""), "tool_calls": [], "model": f"antigravity:{model or 'default'}",
             "conversation_id": res.get("conversation_id")}
 
