@@ -52,6 +52,8 @@ Safety contract (same as browser_automation.py):
   • Headless mode by default; --headed for debugging
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
