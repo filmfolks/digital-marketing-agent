@@ -162,6 +162,35 @@ class RelayServerCase(unittest.TestCase):
             img.unlink(missing_ok=True)
             txt.unlink(missing_ok=True)
 
+    def test_pwa_is_served_from_the_relay(self):
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/app/manifest.json")
+        with urllib.request.urlopen(req, timeout=10) as res:
+            self.assertEqual(res.headers.get("Content-Type"), "application/manifest+json")
+            self.assertIn("Nexus", res.read().decode())
+
+    def test_static_route_blocks_traversal_and_secrets(self):
+        for bad in ("/app/../agent/publish.py", "/app/%2e%2e/.env", "/app/credentials.js", "/app/.hidden"):
+            code, _ = self.request("GET", bad)
+            self.assertEqual(code, 404, bad)
+
+    def test_health_reports_operational_state(self):
+        code, body = self.request("GET", "/health")
+        self.assertEqual(code, 200)
+        for k in ("uptime_s", "queue_counts", "lan", "tls", "playwright", "browser_fallback"):
+            self.assertIn(k, body)
+        self.assertFalse(body["lan"])
+
+    def test_social_dry_run_x_post_is_allowed_without_action_permission(self):
+        # Validation failure (empty text) proves the route exists without a browser.
+        code, body = self.request("POST", "/social", body={"workflow": "x_post", "dry_run": True},
+                                  token=TOKEN)
+        self.assertEqual(code, 400)
+        self.assertIn("text is required", body["error"])
+
+    def test_real_x_post_needs_action_permission(self):
+        code, _ = self.request("POST", "/social", body={"workflow": "x_post", "text": "hi"}, token=TOKEN)
+        self.assertEqual(code, 403)
+
     def test_unknown_route_is_404(self):
         status, _ = self.request("GET", "/nope", token=TOKEN)
         self.assertEqual(status, 404)
@@ -261,6 +290,106 @@ class RelayServerCase(unittest.TestCase):
         })
         self.assertEqual(status, 200)
         self.assertIn("content", body)
+
+
+class LanRelayCase(RelayServerCase):
+    """LAN mode: any Host, same-origin PWA allowed, token mandatory everywhere it matters."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.server.lan = True
+        cls.server.extra_origins = {"https://nexus.example.com"}
+
+    def test_lan_host_header_is_accepted_with_token(self):
+        code, _ = self.request("GET", "/queue", token=TOKEN, host="192.168.1.20:8712")
+        self.assertEqual(code, 200)
+
+    def test_lan_without_token_is_refused(self):
+        code, _ = self.request("GET", "/queue", host="192.168.1.20:8712")
+        self.assertEqual(code, 401)
+
+    def test_same_origin_pwa_is_allowed(self):
+        code, _ = self.request("GET", "/queue", token=TOKEN, host="192.168.1.20:8712",
+                               origin="http://192.168.1.20:8712")
+        self.assertEqual(code, 200)
+
+    def test_listed_hosted_origin_is_allowed_others_refused(self):
+        code, _ = self.request("GET", "/queue", token=TOKEN, origin="https://nexus.example.com")
+        self.assertEqual(code, 200)
+        code, _ = self.request("GET", "/queue", token=TOKEN, origin="https://evil.example.com")
+        self.assertEqual(code, 403)
+
+    def test_shots_require_token_in_lan_mode(self):
+        code, _ = self.request("GET", "/shots/anything.png", host="192.168.1.20:8712")
+        self.assertEqual(code, 401)
+
+    # inherited tests that assert loopback-only Host behaviour do not apply
+    def test_foreign_host_header_is_refused(self):
+        self.skipTest("LAN mode accepts any Host; the token is the gate")
+
+    def test_preflight_with_foreign_host_is_refused(self):
+        self.skipTest("LAN mode accepts any Host; the token is the gate")
+
+    def test_shots_never_send_wildcard_cors_and_reject_non_images(self):
+        self.skipTest("covered in loopback mode; LAN mode additionally requires the token")
+
+    def test_health_reports_operational_state(self):
+        code, body = self.request("GET", "/health")
+        self.assertTrue(body["lan"])
+
+
+class ConfigValidation(unittest.TestCase):
+    def args(self, **kw):
+        import types
+        base = dict(port=8712, lan=False, bind="127.0.0.1", token="", tls_cert="", tls_key="", allow_origin=[])
+        base.update(kw)
+        return types.SimpleNamespace(**base)
+
+    def test_lan_requires_a_long_token(self):
+        errs, _ = relay.validate_config(self.args(lan=True, bind="0.0.0.0"))
+        self.assertTrue(any("requires a token" in e for e in errs))
+        errs, _ = relay.validate_config(self.args(lan=True, bind="0.0.0.0", token="short"))
+        self.assertTrue(any("at least" in e for e in errs))
+        errs, warns = relay.validate_config(self.args(lan=True, bind="0.0.0.0", token="x" * 32))
+        self.assertEqual(errs, [])
+        self.assertTrue(any("TLS" in w for w in warns))
+
+    def test_non_loopback_bind_counts_as_lan(self):
+        errs, _ = relay.validate_config(self.args(bind="192.168.1.5"))
+        self.assertTrue(errs)
+
+    def test_tls_pair_and_files_checked(self):
+        errs, _ = relay.validate_config(self.args(tls_cert="/nope.pem"))
+        self.assertTrue(any("together" in e for e in errs))
+
+    def test_bad_numeric_env_rejected(self):
+        import os
+        os.environ["NEXUS_API_RETRIES"] = "lots"
+        try:
+            errs, _ = relay.validate_config(self.args())
+        finally:
+            del os.environ["NEXUS_API_RETRIES"]
+        self.assertTrue(any("NEXUS_API_RETRIES" in e for e in errs))
+
+    def test_dotenv_is_loaded_and_real_env_wins(self):
+        import os
+        with tempfile.TemporaryDirectory() as d:
+            env = Path(d) / ".env"
+            env.write_text("NEXUS_T1=from-file\nNEXUS_T2=\nNEXUS_T2=second\n# c\nNEXUS_T3='q'\n")
+            os.environ["NEXUS_T1"] = "real"
+            try:
+                relay.load_env([env])
+                self.assertEqual(os.environ["NEXUS_T1"], "real")
+                self.assertEqual(os.environ["NEXUS_T2"], "second")   # empty line skipped
+                self.assertEqual(os.environ["NEXUS_T3"], "q")
+            finally:
+                for k in ("NEXUS_T1", "NEXUS_T2", "NEXUS_T3"):
+                    os.environ.pop(k, None)
+
+    def test_bad_origin_rejected(self):
+        errs, _ = relay.validate_config(self.args(allow_origin=["nexus.example.com/path"]))
+        self.assertTrue(errs)
 
 
 if __name__ == "__main__":
