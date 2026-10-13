@@ -42,7 +42,7 @@ Other settings: `NEXUS_IMAGE_TIMEOUT=60` (seconds per HTTP call), `NEXUS_MEDIA_A
 create/approve; the scheduler still checks before posting), and `NEXUS_CARD_FONT` / `NEXUS_CARD_FONT_BOLD` (.ttf paths).
 
 Brand look: `data/brands/<brand>/brand.json` or `profile.json` → `colors` (`{"primary","secondary","text","accent"}`
-or a list of `#RRGGBB`), `logo` (path) or a `logo.png` file in the brand folder. If no colours are set, a palette is chosen from the brand id (the same brand always gets the same palette).
+or a list of `#RRGGBB`), `logo` (path) or a `logo.png` file in the brand folder. Strict palettes: set `"palette_strict": true` and `colors.allowed` (plus optional `cta_bg`/`cta_fg`). Then every colour in briefs and edits is snapped to the nearest allowed colour, stock photos are duotoned into the palette, and AI prompts say "use ONLY these colours". `visual_guidelines` (brand.json) is shown to every brain. Thosho Tech uses this (blue/grey/white). If no colours are set, a palette is chosen from the brand id (the same brand always gets the same palette).
 
 ## Where things are
 - Files: `data/brands/<brand>/media/<task>-<platform>-<stamp>.png`

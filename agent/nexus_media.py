@@ -166,7 +166,16 @@ def load_brand_style(brand_id: str, root: Optional[Path] = None) -> dict:
                 pal = (hs[0], hs[1] if len(hs) > 1 else hs[0], "#FFFFFF", hs[2] if len(hs) > 2 else (hs[1] if len(hs) > 1 else "#FFB703"))
         if pal:
             break
+    allowed = []
+    strict = bool(info.get("palette_strict"))
+    cdict = next((info[k] for k in ("colors", "brand_colors", "palette", "colours") if isinstance(info.get(k), dict)), {})
+    if cdict:
+        allowed = [h for h in (_hex(x) for x in (cdict.get("allowed") or [])) if h]
+        if not allowed:
+            allowed = [h for h in (_hex(cdict.get(k)) for k in ("primary", "secondary", "text", "accent", "white")) if h]
+            allowed += [h for h in (_hex(x) for x in (cdict.get("greys") or [])) if h]
     if not pal:
+        strict = False
         idx = int(hashlib.sha1((brand_id or "x").encode()).hexdigest(), 16) % len(PALETTES)
         pal = PALETTES[idx]
     logo = None
@@ -176,7 +185,28 @@ def load_brand_style(brand_id: str, root: Optional[Path] = None) -> dict:
             break
     return {"id": brand_id, "name": info.get("business_name") or brand_id or "", "bg": pal[0], "bg2": pal[1],
             "fg": pal[2], "accent": pal[3], "logo": logo, "handles": info.get("handles") or {},
-            "website": info.get("website") or ""}
+            "website": info.get("website") or "", "strict": strict and bool(allowed), "allowed": allowed,
+            "cta_bg": _hex(cdict.get("cta_bg")) if cdict else None, "cta_fg": _hex(cdict.get("cta_fg")) if cdict else None,
+            "guidelines": info.get("visual_guidelines") or ""}
+
+
+def nearest_allowed(h: str, allowed: List[str]) -> str:
+    """Snap a colour to the closest brand colour (strict palettes never get foreign colours)."""
+    r, g, b = _rgb(h)
+    return min(allowed, key=lambda a: sum((x - y) ** 2 for x, y in zip(_rgb(a), (r, g, b))))
+
+
+def enforce_palette(brief: dict, brand: dict) -> dict:
+    if not brand.get("strict"):
+        return brief
+    out = dict(brief)
+    for k in ("bg", "bg2", "fg", "accent"):
+        h = _hex(out.get(k)) if out.get(k) else None
+        if out.get(k) and not h:
+            raise MediaError(f"{k} must be a #RRGGBB colour, got {out[k]!r}")
+        if h and h not in brand["allowed"]:
+            out[k] = nearest_allowed(h, brand["allowed"])
+    return out
 
 
 # ─── image brief ─────────────────────────────────────────────────────────────
@@ -233,8 +263,13 @@ def merge_brief(task: dict, edits: Optional[dict] = None) -> dict:
 
 
 def image_prompt(brief: dict, brand: dict) -> str:
+    if brand.get("strict"):
+        colours = (f"Use ONLY these brand colours: {', '.join(brand['allowed'])} (blue, grey and white). "
+                   "No other accent colours. ")
+    else:
+        colours = f"Brand colours {brand['bg']} and {brand['accent']}. "
     return (f"Social media marketing image for {brand.get('name')}. {brief.get('style')}. "
-            f"Theme: {brief.get('headline')} — {brief.get('subline')}. Brand colours {brand['bg']} and {brand['accent']}. "
+            f"Theme: {brief.get('headline')} — {brief.get('subline')}. {colours}"
             "Modern, high quality, no watermark, no small unreadable text.")
 
 
@@ -322,6 +357,9 @@ def render_card(brief: dict, brand: dict, size: Tuple[int, int], out_path: Path,
     bg, bg2, fg, accent = _hex(bg), _hex(bg2), _hex(fg), _hex(accent)
     if background is not None:
         img = _cover(background.convert("RGB"), size)
+        if brand.get("strict"):
+            from PIL import ImageOps
+            img = ImageOps.colorize(ImageOps.grayscale(img), black=bg, white="#E5E7EB" if "#E5E7EB" in brand["allowed"] else fg)
         shade = Image.new("RGBA", size, (0, 0, 0, 0))
         sd = ImageDraw.Draw(shade)
         for y in range(h):                                  # dark gradient for legibility
@@ -402,8 +440,8 @@ def render_card(brief: dict, brand: dict, size: Tuple[int, int], out_path: Path,
         cf = _font("bold", int(cta_h * 0.42))
         tw = d.textlength(cta, font=cf)
         x0, y0 = m, bottom + int(unit * 0.02)
-        d.rounded_rectangle([x0, y0, x0 + tw + cta_h, y0 + cta_h], radius=cta_h // 2, fill=accent)
-        d.text((x0 + cta_h / 2, y0 + cta_h * 0.27), cta, font=cf, fill=bg)
+        d.rounded_rectangle([x0, y0, x0 + tw + cta_h, y0 + cta_h], radius=cta_h // 2, fill=brand.get("cta_bg") or accent)
+        d.text((x0 + cta_h / 2, y0 + cta_h * 0.27), cta, font=cf, fill=brand.get("cta_fg") or bg)
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     img.save(out_path, "PNG", optimize=True)
@@ -624,7 +662,10 @@ def produce(task: dict, *, providers: Optional[List[str]] = None, edits: Optiona
         return {"ok": False, "skipped": True, "reason": "no platform of this task needs an image", "attempts": []}
     brand_id = task.get("brand") or os.environ.get("NEXUS_BRAND") or "default"
     brand = load_brand_style(brand_id, brand_root)
-    brief = merge_brief(task, {k: v for k, v in (edits or {}).items() if k not in ("provider", "providers", "force_platform")})
+    brief = enforce_palette(merge_brief(task, {k: v for k, v in (edits or {}).items()
+                                               if k not in ("provider", "providers", "force_platform")}), brand)
+    if brand.get("strict") and "brand colours only" not in str(brief.get("style", "")).lower():
+        brief["style"] = (str(brief.get("style") or "clean, bold") + "; brand colours only: blue, grey and white").strip("; ")
     pick = (edits or {}).get("providers") or (edits or {}).get("provider")
     if pick:
         order = chain(",".join(pick) if isinstance(pick, (list, tuple)) else str(pick))

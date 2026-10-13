@@ -51,7 +51,9 @@ def system_prompt(brand: Optional[dict] = None, *, now=None) -> str:
                 "voice": p.get("voice") or p.get("tone"), "audience": p.get("audience") or p.get("target_audience"),
                 "pillars": [x.get("name") if isinstance(x, dict) else x for x in (p.get("pillars") or [])][:6],
                 "hashtags": (p.get("hashtags") or [])[:12] if isinstance(p.get("hashtags"), list) else p.get("hashtags"),
-                "location": b.get("location") or p.get("location")}
+                "location": b.get("location") or p.get("location"),
+                "visual_guidelines": b.get("visual_guidelines") or p.get("visual_guidelines"),
+                "brand_colours": ((b.get("colors") or {}).get("allowed") if isinstance(b.get("colors"), dict) else b.get("colors"))}
         brand_block = "Active brand (use it unless the user names another):\n" + json.dumps(
             {k: v for k, v in bits.items() if v}, ensure_ascii=False)
     next_monday = (now + timedelta(days=(7 - now.weekday()) or 7)).date().isoformat()

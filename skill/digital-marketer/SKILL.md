@@ -263,6 +263,7 @@ When generating images with `generate_image`:
 - If you made a picture with `generate_image`, save it under `data/brands/<brand>/media/` and attach it with
   `POST /tasks/<id>/update {"media": ["<absolute path>"]}`; otherwise call the `generate_task_image` /
   `regenerate_task_image` tools (MCP `nexus-tasks`) or `POST /tasks/<id>/image {"edits": {...}}`.
+- Brand palette is law: read `brand.json` → `visual_guidelines` / `colors.allowed` (Thosho Tech: blue #1E5EFF, greys #2B2F36 #6B7280 #E5E7EB, white #FFFFFF only) and put it in every `generate_image` prompt.
 - Full rules and the edit fields: `skills/nexus/SKILL.md` → "Images: step by step", and `docs/tutorials/MEDIA.md`.
 
 ### Image Prompt Formula

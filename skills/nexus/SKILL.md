@@ -64,7 +64,8 @@ they appear as `mcp_nexus_<tool>` (e.g. `mcp_nexus_draft_post`).
    Example: "make it green and say 'Try it free'" →
    `{"task_id": "t-…", "edits": {"bg": "#14532D", "cta": "Try it free"}}`
 6. Regenerating the image of an APPROVED post sends it back to `pending_approval`: say so.
-7. Never claim a picture exists unless the tool result shows `"image"` / `"media"`.
+7. Brand palette: if `get_brand_profile` → `brand_info.palette_strict` is true, use ONLY `brand_info.colors.allowed` in `image_brief`, `poster_idea` and any colour edit (Thosho Tech: blue #1E5EFF, greys #2B2F36/#6B7280/#E5E7EB, white #FFFFFF; never other accents). Nexus snaps foreign colours to the nearest brand colour.
+8. Never claim a picture exists unless the tool result shows `"image"` / `"media"`.
 
 ## Files
 - `system_prompt.md` — the system prompt Nexus itself uses for local models (fill-ins: date, tz, brand).

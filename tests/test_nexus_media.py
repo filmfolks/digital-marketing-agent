@@ -87,6 +87,33 @@ class Rules(unittest.TestCase):
         self.assertTrue(nm.HEX.match(st2["bg"]))
 
 
+class StrictPalette(unittest.TestCase):
+    def root(self):
+        root = Path(tempfile.mkdtemp()); (root / "tt").mkdir()
+        (root / "tt" / "brand.json").write_text(json.dumps({"business_name": "TT", "palette_strict": True,
+            "colors": {"primary": "#1E5EFF", "secondary": "#2B2F36", "text": "#FFFFFF", "accent": "#E5E7EB",
+                       "cta_bg": "#FFFFFF", "cta_fg": "#1E5EFF",
+                       "allowed": ["#1E5EFF", "#2B2F36", "#6B7280", "#E5E7EB", "#FFFFFF"]}}))
+        return root
+
+    def test_foreign_colours_snapped_and_prompt_strict(self):
+        root = self.root()
+        st = nm.load_brand_style("tt", root)
+        self.assertTrue(st["strict"])
+        b = nm.enforce_palette({"bg": "#FFB703", "accent": "#00FF00", "fg": "#FFFFFF"}, st)
+        self.assertTrue(all(b[k] in st["allowed"] for k in ("bg", "accent", "fg")))
+        self.assertIn("ONLY these brand colours", nm.image_prompt({"headline": "h"}, st))
+        r = nm.produce({"id": "t", "brand": "tt", "platforms": ["instagram"], "content": "Hi there."},
+                       providers=["card"], edits={"accent": "#FF0000"}, out_dir=Path(tempfile.mkdtemp()), brand_root=root)
+        self.assertIn(r["brief"]["accent"], st["allowed"])
+        self.assertIn("blue, grey and white", r["brief"]["style"])
+
+    def test_non_strict_brand_untouched(self):
+        st = nm.load_brand_style("acme", brand_root())
+        self.assertFalse(st["strict"])
+        self.assertEqual(nm.enforce_palette({"bg": "#FFB703"}, st)["bg"], "#FFB703")
+
+
 class Render(unittest.TestCase):
     def test_card_sizes_for_every_platform(self):
         out = Path(tempfile.mkdtemp())
