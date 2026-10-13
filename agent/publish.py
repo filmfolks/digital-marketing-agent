@@ -367,6 +367,7 @@ def publish_with_fallback(platform: str, text: str, c: dict, media: str = "", *,
             "dry_run": bool(bres.get("dry_run")) or None, "api_error": api_error,
             "error": None if bres.get("ok") else bres.get("error"),
             "logged_out": bool(bres.get("logged_out")) or None,
+            "permalink": bres.get("permalink"),
             "screenshot": bres.get("screenshot"), "attempts": attempts}
 
 

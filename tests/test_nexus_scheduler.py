@@ -127,23 +127,33 @@ class SchedulerTests(unittest.TestCase):
         sch.interval_s = 0.05
         approved(s, "2026-10-20T17:59")
         self.assertTrue(sch.start())
-        other = ns.Scheduler(s, runner=lambda t: {"ok": True}, clock=clock)
-        self.assertFalse(other.start())
         for _ in range(100):
             if posted:
                 break
             threading.Event().wait(0.02)
-        sch.stop()
-        self.assertEqual(len(posted), 1)
-        self.assertTrue(other.start())                    # lock released on stop
+        other_posted = []
+        other = ns.Scheduler(s, runner=lambda t: other_posted.append(t["id"]) or {"ok": True}, clock=clock,
+                             interval_s=0.05)
+        other.start()                                     # lock held → waits, never runs alongside
+        threading.Event().wait(0.9)
+        self.assertTrue(other.status()["waiting_for_lock"])
+        self.assertEqual(other_posted, [])
+        sch.stop()                                        # lock released → the waiter takes over
+        t2 = approved(s, "2026-10-20T17:59")
+        for _ in range(100):
+            if other_posted:
+                break
+            threading.Event().wait(0.05)
         other.stop()
+        self.assertEqual(len(posted), 1)
+        self.assertEqual(other_posted, [t2["id"]])
 
     def test_publish_runner_builds_publish_py_call(self):
         seen = {}
 
         class P:
             returncode = 0
-            stdout = '{"status": "ok", "results": [{"platform": "x", "ok": true, "url": "https://x.com/a/status/1"}]}'
+            stdout = '{"status": "validated", "results": [{"platform": "x", "ok": true, "url": "https://x.com/a/status/1"}]}'
             stderr = ""
 
         def run(args, **kw):
@@ -155,6 +165,29 @@ class SchedulerTests(unittest.TestCase):
         self.assertIn("--dry-run", seen["args"])
         self.assertIn('"platforms": ["x"]', seen["payload"])
         self.assertEqual(r["permalinks"], ["https://x.com/a/status/1"])
+
+    def test_live_run_no_retries_needs_published_and_keeps_permalink(self):
+        seen = {}
+
+        class P:
+            returncode = 0
+            stdout = ('[x] noise {not json}\n{\n  "status": "published",\n  "results": [{"platform": "x", "ok": true, '
+                      '"route": "browser", "permalink": "https://x.com/thoshotech/status/9"}]\n}')
+            stderr = ""
+
+        def run(args, **kw):
+            seen["env"] = kw.get("env") or {}
+            seen["args"] = args
+            return P()
+        r = ns.publish_runner({"id": "t-2", "platforms": ["x"], "content": "hi", "media": []}, run=run)
+        self.assertTrue(r["ok"])
+        self.assertNotIn("--dry-run", seen["args"])
+        self.assertEqual(seen["env"].get("NEXUS_BROWSER_RETRIES"), "0")   # no double-post via retry
+        self.assertEqual(seen["env"].get("NEXUS_API_RETRIES"), "0")
+        self.assertEqual(r["permalinks"], ["https://x.com/thoshotech/status/9"])
+        P.stdout = '{"status": "partial", "results": []}'
+        self.assertFalse(ns.publish_runner({"id": "t-3", "platforms": ["x", "facebook"], "content": "hi", "media": []},
+                                           run=run)["ok"])
 
 
 if __name__ == "__main__":

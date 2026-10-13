@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from unittest import mock
+
 import sys
 import tempfile
 import types
@@ -243,6 +246,7 @@ class Locators(unittest.TestCase):
 
 
 class LoginDetection(unittest.TestCase):
+    @mock.patch.dict(os.environ, {"NEXUS_CDP_URL": "off"})   # independent of a .env attach URL
     def test_login_url_means_logged_out(self):
         page = FakePage({}, url_after_goto="https://x.com/i/flow/login")
         with self.assertRaises(core.LoggedOut) as cm:
@@ -267,6 +271,7 @@ class LoginDetection(unittest.TestCase):
         self.assertIn("by hand", str(cm.exception))
         self.assertEqual(page.clicks, [])
 
+    @mock.patch.dict(os.environ, {"NEXUS_CDP_URL": "off"})   # independent of a .env attach URL
     def test_check_login_reports_cleanly(self):
         r = flows.check_login(FakePage({}, url_after_goto="https://www.canva.com/login"), "canva",
                               "https://www.canva.com/", pacer=nopace())

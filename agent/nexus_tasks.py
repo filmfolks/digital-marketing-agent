@@ -359,7 +359,13 @@ class TaskStore:
             if task["status"] in ("running", "done"):
                 raise TaskError(f"task is {task['status']}; it can no longer be edited")
             changed = [k for k, v in clean.items() if task.get(k) != v]
-            task.update(clean)
+            if not changed:
+                # Never record an empty "updated" event as success: the UI must
+                # send the fields it changed (see ui/nexus-tasks.js).
+                sent = sorted(k for k in fields if k in EDITABLE)
+                raise TaskError("nothing changed" + (f" (sent {sent} with the same values)" if sent
+                                                     else f"; editable fields are {list(EDITABLE)}"))
+            task.update({k: clean[k] for k in changed})
             # Editing the content of an approved post sends it back for approval,
             # unless only the time moved (reschedule keeps the approval).
             if task["status"] == "approved" and set(changed) - {"scheduled_at", "notes"} and by not in ("user", "owner", "ui"):

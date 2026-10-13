@@ -450,6 +450,24 @@ FB_POST = [C("css", "[role='dialog'] [aria-label='Post'][role='button']"),
            C("css", "[role='dialog'] div[role='button']:has(span:text-is('Post'))"),
            C("css", "[role='dialog'] div[role='button']:text-is('Post')")]
 FB_DIALOG = [C("css", "form[method='POST'] [role='dialog']"), C("css", "[role='dialog'] div[contenteditable='true']")]
+
+FB_UPSELL_DISMISS = [C("css", "[role='dialog'] div[role='button']:has(span:text-is('Not now'))"),
+                     C("css", "[role='dialog'] [aria-label='Not now']")]
+
+
+def dismiss_fb_upsell(page) -> bool:
+    """Close Facebook's optional upsell pop-ups (e.g. 'Speak to people directly' / Call Now)."""
+    for c in FB_UPSELL_DISMISS:
+        try:
+            loc = c.resolve(page).first
+            if loc.count() and loc.is_visible():
+                loc.click(timeout=3000)
+                page.wait_for_timeout(800)
+                return True
+        except Exception:                          # noqa: BLE001
+            continue
+    return False
+
 FB_POSTED = [C("text", "Your post is now published"), C("text", "Post published"), C("text", "Just now")]
 
 
@@ -513,6 +531,7 @@ def facebook_page_post(page, text: str, media: list[str] | None = None, *, page_
     except ElementNotFound:
         pass
     refuse_destructive_prompt(page)
+    dismiss_fb_upsell(page)
     button = find_first(page, FB_POST, timeout_ms=10000)
     if button.is_disabled():
         raise FlowError("Facebook disabled the Post button (image still uploading or text rejected)")
@@ -529,6 +548,14 @@ def facebook_page_post(page, text: str, media: list[str] | None = None, *, page_
     confirmed = False
     for _ in range(30):                    # composer closes or a toast appears
         page.wait_for_timeout(1000)
+        if dismiss_fb_upsell(page):
+            try:                           # the upsell can swallow the Post click: press Post once more
+                again = find_first(page, FB_POST, timeout_ms=1500)
+                if not again.is_disabled():
+                    safe_click(page, again, label="Post (after upsell)")
+            except ElementNotFound:
+                pass
+            continue
         try:
             find_first(page, FB_POSTED, timeout_ms=0)
             confirmed = True

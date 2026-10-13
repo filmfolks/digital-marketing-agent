@@ -19,7 +19,7 @@
  *   non-GET            → pass through (publishing, AI calls, relay)
  */
 
-const VERSION = 'v8';
+const VERSION = 'v9';
 const CACHE = `nexus-ui-${VERSION}`;
 const PRECACHE = [
     './',

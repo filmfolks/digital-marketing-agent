@@ -39,7 +39,7 @@ test('groupByDay uses the stored (user-tz) day, skips cancelled, sorts by time',
 });
 test('drag to another day keeps time and offset', () => {
     assert.equal(T.moveToDay('2026-10-20T19:00:00+05:30', '2026-10-23'), '2026-10-23T19:00:00+05:30');
-    assert.equal(T.moveToDay(null, '2026-10-23'), '2026-10-23T10:00');
+    assert.equal(T.moveToDay(null, '2026-10-23'), '2026-10-23T10:00:00+05:30');
 });
 test('SSE parser handles split chunks', () => {
     let r = T.parseSSE('event: task\ndata: {"task":{"id":"t1"}}\n\nevent: te');
@@ -66,5 +66,19 @@ test('task card escapes model text and shows the right buttons', () => {
     assert.ok(!done.includes('data-act="approve"') && !done.includes('data-act="edit"'));
 });
 
+test('datetime-local value becomes tz-aware ISO in the stored offset', () => {
+    assert.equal(T.fromLocalInput('2026-10-13T08:45', '2026-10-20T17:00:00+05:30'), '2026-10-13T08:45:00+05:30');
+    assert.equal(T.fromLocalInput('2026-10-13T08:45', null), '2026-10-13T08:45:00+05:30');
+    assert.equal(T.fromLocalInput('', 'x'), '');
+});
+test('edit sends only changed fields (rescheduling an approved task)', () => {
+    const orig = { title: 'A', content: 'B', poster_idea: '', platforms: ['x'], scheduled_at: '2026-10-20T17:00:00+05:30' };
+    assert.deepEqual(T.changedFields(orig, { title: 'A', content: 'B', poster_idea: '', platforms: ['x'],
+        scheduled_at: '2026-10-13T08:45:00+05:30' }), { scheduled_at: '2026-10-13T08:45:00+05:30' });
+    assert.deepEqual(T.changedFields(orig, { title: 'A', platforms: ['x'], scheduled_at: '2026-10-20T17:00:00+05:30' }), {});
+});
+test('drag to another day keeps time and offset', () => {
+    assert.equal(T.moveToDay('2026-10-20T17:00:00+05:30', '2026-10-13'), '2026-10-13T17:00:00+05:30');
+});
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

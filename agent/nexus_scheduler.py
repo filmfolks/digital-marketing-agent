@@ -35,6 +35,19 @@ sys.path.insert(0, str(ROOT / "agent"))
 import nexus_tasks as nt  # noqa: E402
 
 
+def _last_json(out: str) -> dict:
+    """publish.py prints one (indented) JSON object last; anything before it is noise."""
+    lines = out.splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].startswith("{"):
+            try:
+                v = json.loads("\n".join(lines[i:]))
+                return v if isinstance(v, dict) else {}
+            except ValueError:
+                continue
+    return {}
+
+
 def publish_runner(task: dict, *, dry_run: bool = False, run: Callable = subprocess.run) -> dict:
     """Publish one task through agent/publish.py --from-json. Returns {ok, results, permalinks}."""
     jdir = nt.data_root() / "tasks" / "tmp"
@@ -48,18 +61,19 @@ def publish_runner(task: dict, *, dry_run: bool = False, run: Callable = subproc
     if dry_run:
         args.append("--dry-run")
     try:
-        proc = run(args, capture_output=True, text=True, timeout=1200, cwd=str(ROOT))
+        # A scheduled post must never be posted twice: a browser "failure" can
+        # happen AFTER the Post click (e.g. permalink lookup), so no automatic
+        # browser/API retries here — a failed task waits for a human.
+        env = {**os.environ, "NEXUS_BROWSER_RETRIES": "0", "NEXUS_API_RETRIES": "0"}
+        proc = run(args, capture_output=True, text=True, timeout=1200, cwd=str(ROOT), env=env)
     finally:
         try:
             jf.unlink()
         except OSError:
             pass
     out = proc.stdout or ""
-    try:
-        res = json.loads(out[out.index("{"):]) if "{" in out else {}
-    except ValueError:
-        res = {}
-    ok = proc.returncode == 0 and res.get("status") not in ("failed",)
+    res = _last_json(out)
+    ok = proc.returncode == 0 and res.get("status") in (("validated", "published") if dry_run else ("published",))
     links = []
     rs = res.get("results") or []
     for v in (rs.values() if isinstance(rs, dict) else rs):
@@ -154,19 +168,38 @@ class Scheduler:
 
     # ── background thread ──────────────────────────────────────────────────
     def start(self) -> bool:
-        try:
-            self._lock.acquire()
-        except TimeoutError:
-            print("[scheduler] another scheduler holds data/tasks/scheduler.lock; not starting a second one")
-            return False
-        recovered = self.recover()
-        if recovered:
-            print(f"[scheduler] marked {len(recovered)} interrupted task(s) failed: {recovered}")
+        """Start the background thread. If data/tasks/scheduler.lock is held (another
+        live scheduler, or a relay that was killed seconds ago and left its lock),
+        the thread waits for it instead of giving up: a live scheduler keeps the
+        lock fresh, a dead one's lock goes stale after ``stale_s`` and is broken.
+        Before this, a quick relay restart silently left the scheduler OFF."""
+        self.waiting_for_lock = False
         self._thread = threading.Thread(target=self._loop, name="nexus-scheduler", daemon=True)
         self._thread.start()
         return True
 
+    def _take_lock(self) -> bool:
+        while not self._stop.is_set():
+            try:
+                self._lock.acquire()
+                self.waiting_for_lock = False
+                self._has_lock = True
+                return True
+            except TimeoutError:
+                if not self.waiting_for_lock:
+                    print("[scheduler] data/tasks/scheduler.lock is held (another scheduler, or a stale lock "
+                          f"from a killed relay — broken after {int(self._lock.stale_s)}s); waiting")
+                self.waiting_for_lock = True
+                self._stop.wait(min(10.0, self.interval_s))
+        return False
+
     def _loop(self) -> None:
+        if not self._take_lock():
+            return
+        recovered = self.recover()
+        if recovered:
+            print(f"[scheduler] marked {len(recovered)} interrupted task(s) failed: {recovered}")
+        print("[scheduler] running")
         while not self._stop.is_set():
             try:
                 os.utime(str(self._lock.path))                 # heartbeat: keeps the lock from looking stale
@@ -181,9 +214,11 @@ class Scheduler:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=5)
-        self._lock.release()
+        if getattr(self, "_has_lock", False):
+            self._lock.release()
 
     def status(self) -> dict:
         return {"running": bool(self._thread and self._thread.is_alive()), "last_tick": self.last_tick,
-                "interval_s": self.interval_s, "grace_minutes": self.grace.total_seconds() / 60,
+                "interval_s": self.interval_s,
+                "waiting_for_lock": bool(getattr(self, "waiting_for_lock", False)), "grace_minutes": self.grace.total_seconds() / 60,
                 "dry_run": self.dry_run, "timezone": nt.tz_name()}

@@ -70,6 +70,30 @@ class TaskRoutes(unittest.TestCase):
         self.assertEqual(r["task"]["status"], "cancelled")
         self.assertEqual(self.call("/tasks/t-missing")[0], 404)
 
+    def test_reschedule_approved_task_like_the_ui(self):
+        """The UI sends a tz-aware ISO (datetime-local + user offset) to /tasks/<id>/update."""
+        st, r = self.call("/tasks", {"title": "R", "content": "Hi", "platforms": ["x"],
+                                     "scheduled_at": "2030-02-20T17:00:00+05:30"})
+        tid = r["task"]["id"]
+        st, r = self.call(f"/tasks/{tid}/approve", {"scheduled_at": "2030-02-20T17:00:00+05:30"})  # same time
+        self.assertEqual((st, r["task"]["status"]), (200, "approved"))
+        self.assertFalse([h for h in r["task"]["history"] if h["event"] == "updated"])  # no empty update
+        st, r = self.call(f"/tasks/{tid}/update", {"scheduled_at": "2030-02-13T08:45:00+05:30"})
+        self.assertEqual(st, 200)
+        self.assertEqual(r["task"]["scheduled_at"], "2030-02-13T08:45:00+05:30")
+        self.assertEqual(r["task"]["status"], "approved")                 # reschedule keeps approval
+        self.assertEqual(r["task"]["history"][-1]["fields"], ["scheduled_at"])
+        st, r = self.call(f"/tasks/{tid}/update", {"scheduled_at": "2030-02-13T09:15"})  # naive = Asia/Kolkata
+        self.assertEqual(r["task"]["scheduled_at"], "2030-02-13T09:15:00+05:30")
+        # nothing changed → error, and no empty "updated" event
+        st, r = self.call(f"/tasks/{tid}/update", {"scheduled_at": "2030-02-13T09:15:00+05:30", "content": "Hi"})
+        self.assertEqual(st, 400)
+        self.assertIn("nothing changed", r["error"])
+        st, r = self.call(f"/tasks/{tid}/update", {"when": "2030-02-14T09:00"})   # unknown key
+        self.assertEqual(st, 400)
+        st, r = self.call(f"/tasks/{tid}")
+        self.assertFalse([h for h in r["task"]["history"] if h["event"] == "updated" and not h["fields"]])
+
     def test_token_required(self):
         self.assertEqual(self.call("/tasks", token="wrong")[0], 401)
         self.assertEqual(self.call("/tasks", {"title": "x"}, token=None)[0], 401)

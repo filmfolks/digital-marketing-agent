@@ -1040,6 +1040,16 @@ def main() -> int:
               "then paste the token in Settings → Local Relay.")
     else:
         print("    bound to 127.0.0.1. Ctrl+C to stop.")
+    # `kill <pid>` / launchctl stop send SIGTERM: shut down like Ctrl+C so the
+    # scheduler releases data/tasks/scheduler.lock and a restart resumes at once.
+    import signal
+
+    def _term(*_a):
+        raise KeyboardInterrupt
+    try:
+        signal.signal(signal.SIGTERM, _term)
+    except (ValueError, OSError):                   # not the main thread (tests)
+        pass
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

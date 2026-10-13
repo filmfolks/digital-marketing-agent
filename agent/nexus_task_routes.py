@@ -126,7 +126,9 @@ class TaskRoutesMixin:
                     t = store.update(tid, body, by="user")
                 elif action == "approve":
                     if body.get("scheduled_at"):
-                        store.update(tid, {"scheduled_at": body["scheduled_at"]}, by="user")
+                        cur = store.get(tid).get("scheduled_at")
+                        if nt.parse_when(body["scheduled_at"]) != nt.parse_when(cur):
+                            store.update(tid, {"scheduled_at": body["scheduled_at"]}, by="user")
                     t = store.approve(tid, by="owner (ui)")
                 elif action == "unapprove":
                     t = store.transition(tid, "pending_approval", by="owner (ui)")

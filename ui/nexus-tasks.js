@@ -34,6 +34,22 @@
     const timeOf = iso => (iso ? String(iso).slice(11, 16) : '');
     /** value for <input type=datetime-local> */
     const toLocalInput = iso => (iso ? String(iso).slice(0, 16) : '');
+    /** Offset of a stored time ('+05:30'), default the user's zone (Asia/Kolkata). */
+    const offsetOf = iso => (String(iso || '').match(/([+-]\d\d:\d\d|Z)$/) || [null, '+05:30'])[1];
+    /** <input type=datetime-local> value → tz-aware ISO in the user's zone
+     *  ('2026-10-13T08:45' → '2026-10-13T08:45:00+05:30'). */
+    const fromLocalInput = (v, refIso) => (v ? `${String(v).slice(0, 16)}:00${offsetOf(refIso) === 'Z' ? '+05:30' : offsetOf(refIso)}` : '');
+    /** Same instant? (compares the minute in the stored offset) */
+    const sameTime = (a, b) => !!a && !!b && String(a).slice(0, 16) === String(b).slice(0, 16) && offsetOf(a) === offsetOf(b);
+    /** Only the fields that really changed — the relay rejects an edit that changes nothing. */
+    function changedFields(orig, fields) {
+        const out = {};
+        for (const [k, v] of Object.entries(fields)) {
+            if (k === 'scheduled_at') { if (v && !sameTime(v, orig.scheduled_at)) out[k] = v; continue; }
+            if (JSON.stringify(v ?? '') !== JSON.stringify(orig[k] ?? '')) out[k] = v;
+        }
+        return out;
+    }
 
     /** Weeks (Mon-first) covering a month: array of arrays of 'YYYY-MM-DD'. */
     function monthGrid(year, month) {
@@ -67,8 +83,8 @@
     }
     /** Keep the time (and offset) of a task, move it to another day. */
     function moveToDay(iso, newDay) {
-        if (!iso) return `${newDay}T10:00`;
-        return newDay + String(iso).slice(10);
+        if (!iso) return `${newDay}T10:00:00+05:30`;
+        return newDay + String(iso).slice(10);   // keeps time + offset → tz-aware
     }
     /** Split an SSE buffer into complete events; returns {events, rest}. */
     function parseSSE(buf) {
@@ -131,7 +147,7 @@
                 ${canApprove ? `<button class="btn btn-primary btn-sm" data-act="approve">Approve</button>` : ''}
                 ${t.status === 'approved' ? `<button class="btn btn-ghost btn-sm" data-act="unapprove">Unapprove</button>` : ''}
                 ${editable ? `<button class="btn btn-ghost btn-sm" data-act="edit">Edit</button>
-                <input type="datetime-local" class="nt-when" value="${esc(toLocalInput(t.scheduled_at))}" aria-label="Schedule">
+                <input type="datetime-local" class="nt-when" value="${esc(toLocalInput(t.scheduled_at))}" data-orig="${esc(t.scheduled_at || '')}" aria-label="Schedule">
                 <button class="btn btn-ghost btn-sm" data-act="schedule">Schedule</button>
                 <button class="btn btn-ghost btn-sm" data-act="cancel">Cancel</button>` : ''}
             </div></div>`;
@@ -159,14 +175,17 @@
         const a = btn.dataset.act;
         let t = null;
         if (a === 'approve') {
-            const when = card.querySelector('.nt-when')?.value;
-            t = await act(id, 'approve', when ? { scheduled_at: when } : {});
+            const inp = card.querySelector('.nt-when');
+            const when = fromLocalInput(inp?.value, inp?.dataset.orig);
+            t = await act(id, 'approve', when && !sameTime(when, inp.dataset.orig) ? { scheduled_at: when } : {});
         } else if (a === 'unapprove' || a === 'cancel') {
             if (a === 'cancel' && !confirm('Cancel this task?')) return;
             t = await act(id, a);
         } else if (a === 'schedule') {
-            const when = card.querySelector('.nt-when')?.value;
+            const inp = card.querySelector('.nt-when');
+            const when = fromLocalInput(inp?.value, inp?.dataset.orig);
             if (!when) return toast('Pick a date and time first', 'error');
+            if (sameTime(when, inp.dataset.orig)) return toast('That is already the scheduled time — change it first', 'error');
             t = await act(id, 'update', { scheduled_at: when });
         } else if (a === 'edit') {
             t = await editTask(id);
@@ -200,8 +219,10 @@
                 const v = n => wrap.querySelector(`[name=${n}]`).value;
                 const fields = { title: v('title'), content: v('content'), poster_idea: v('poster_idea'),
                     platforms: [...wrap.querySelectorAll('.nt-plats input:checked')].map(i => i.value) };
-                if (v('scheduled_at')) fields.scheduled_at = v('scheduled_at');
-                const r = await act(id, 'update', fields);
+                if (v('scheduled_at')) fields.scheduled_at = fromLocalInput(v('scheduled_at'), t.scheduled_at);
+                const diff = changedFields(t, fields);
+                if (!Object.keys(diff).length) { toast('Nothing changed', 'info'); return; }
+                const r = await act(id, 'update', diff);
                 if (r) { wrap.remove(); resolve(r); }
             });
         });
@@ -400,6 +421,6 @@
 
     window.NexusTasksUI = {
         onPage,
-        __internals: { esc, monthGrid, weekOf, groupByDay, moveToDay, parseSSE, brainFromSettings, taskCardHtml, dayOf, timeOf, toLocalInput },
+        __internals: { esc, monthGrid, weekOf, groupByDay, moveToDay, parseSSE, brainFromSettings, taskCardHtml, dayOf, timeOf, toLocalInput, fromLocalInput, changedFields, sameTime },
     };
 })();
