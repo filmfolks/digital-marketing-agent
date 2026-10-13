@@ -1,5 +1,5 @@
 #!/bin/bash
-# Nexus — Mac setup for the stock /usr/bin/python3 (3.9.x, Xcode CLT).
+# Nexus — Mac setup. Uses $PYTHON, else the best Python 3.9-3.12 found (stock /usr/bin/python3 3.9 or Homebrew).
 # Creates .venv and installs only what posting needs (exact pins, binary wheels).
 # No browser download: in CDP mode Nexus attaches to your own running Chrome.
 #   ./scripts/mac_setup_py39.sh            # posting only
@@ -7,7 +7,15 @@
 #   ./scripts/mac_setup_py39.sh --with-ai  # + optional AI SDKs (not needed: providers are called over HTTP)
 set -euo pipefail
 cd "$(dirname "$0")/.."
-PY="${PYTHON:-python3}"
+pick_python() {
+  # PYTHON wins; else the first CPython 3.9-3.12 found (code is 3.9-compatible; 3.13+ lacks some wheels).
+  if [ -n "${PYTHON:-}" ]; then echo "$PYTHON"; return; fi
+  for c in python3.12 python3.11 python3.10 python3.9 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11 /usr/local/bin/python3.12 /usr/local/bin/python3.11 /usr/bin/python3 python3; do
+    if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; sys.exit(0 if (3,9)<=sys.version_info[:2]<=(3,12) else 1)' 2>/dev/null; then echo "$c"; return; fi
+  done
+  echo python3
+}
+PY="$(pick_python)"
 "$PY" - <<'PYCHK'
 import sys
 v = sys.version_info

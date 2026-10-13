@@ -5,7 +5,15 @@
 #   ./start.sh --check    validate config and exit
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
-PY_BOOT="${PYTHON:-python3}"
+pick_python() {
+  # PYTHON wins; else the first CPython 3.9-3.12 found (code is 3.9-compatible; 3.13+ lacks some wheels).
+  if [ -n "${PYTHON:-}" ]; then echo "$PYTHON"; return; fi
+  for c in python3.12 python3.11 python3.10 python3.9 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11 /usr/local/bin/python3.12 /usr/local/bin/python3.11 /usr/bin/python3 python3; do
+    if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; sys.exit(0 if (3,9)<=sys.version_info[:2]<=(3,12) else 1)' 2>/dev/null; then echo "$c"; return; fi
+  done
+  echo python3
+}
+PY_BOOT="$(pick_python)"
 if [ -d .venv ] && ! .venv/bin/python -c 'import sys' >/dev/null 2>&1; then
     echo "→ .venv was made on another machine (or is broken); recreating it"
     rm -rf .venv

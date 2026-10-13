@@ -311,6 +311,7 @@ class BrandSocialLinks(TempMemory):
         cc = load_agent("client_config")
         with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {
                 "NEXUS_BRANDS_DIR": d, "NEXUS_CLIENT_CONFIG": str(Path(d) / "none.json")}):
+            os.environ.pop("NEXUS_BRAND", None)   # a real .env may pin another brand
             (Path(d) / "acme").mkdir()
             (Path(d) / "acme" / "brand.json").write_text(json.dumps(
                 {"id": "acme", "handles": {"twitter": "@AcmeCo", "facebook": "AcmePage"}}))

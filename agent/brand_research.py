@@ -59,6 +59,16 @@ def slugify(text: str) -> str:
     return s[:60] or "brand"
 
 
+def env_value(raw: str) -> str:
+    """Value part of a .env line: quotes removed, unquoted inline "  # comment" dropped
+    (.env.example has lines like `NEXUS_API_RETRIES=2   # extra attempts`)."""
+    v = raw.strip()
+    if v[:1] in ("'", '"'):
+        end = v.find(v[0], 1)
+        return v[1:end] if end > 0 else v[1:]
+    return re.split(r"\s+#", v, maxsplit=1)[0].strip()
+
+
 def load_env() -> None:
     p = ROOT / ".env"
     if not p.is_file():
@@ -67,7 +77,7 @@ def load_env() -> None:
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             k, v = line.split("=", 1)
-            k, v = k.strip(), v.strip().strip('"').strip("'")
+            k, v = k.strip(), env_value(v)
             if k and v and not os.environ.get(k):
                 os.environ[k] = v
 

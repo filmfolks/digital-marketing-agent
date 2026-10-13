@@ -437,6 +437,8 @@ def endpoint(cfg: BrainConfig) -> Tuple[str, dict, str]:
                                    "ollama": "http://localhost:11434/v1/chat/completions"}.get(cfg.provider, "")
     if cfg.provider == "ollama" and url.rstrip("/").endswith(":11434"):
         url = url.rstrip("/") + "/v1/chat/completions"
+    elif url and not url.rstrip("/").endswith("/chat/completions") and url.rstrip("/").endswith("/v1"):
+        url = url.rstrip("/") + "/chat/completions"   # e.g. LM_STUDIO_URL=http://127.0.0.1:1234/v1
     key = cfg.api_key or os.getenv(entry.get("api_key_env", "") or "_", "")
     if cfg.provider not in LOCAL and not key:
         raise BrainError(f"{cfg.provider}: API key not set ({entry.get('api_key_env', 'API key')})")

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import unittest.mock
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -109,7 +110,9 @@ class WireFormatTests(unittest.TestCase):
                 {"id": "c1", "type": "function", "function": {"name": "list_tasks", "arguments": "{\"limit\": \"5\"}"}}]}}]}
         cfg = br.BrainConfig("lmstudio", model="hermes-3-llama-3.1-8b")
         r = br.chat([{"role": "user", "content": "what is planned?"}], tools=TOOLS, cfg=cfg, post=post)
-        self.assertEqual(captured["url"], "http://localhost:1234/v1/chat/completions")
+        exp = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1/chat/completions").rstrip("/")
+        exp = exp if exp.endswith("/chat/completions") else exp + "/chat/completions"
+        self.assertEqual(captured["url"], exp)
         self.assertEqual(len(captured["payload"]["tools"]), len(TOOLS))
         self.assertEqual(r["tool_calls"][0]["arguments"], {"limit": 5})
         self.assertEqual(r["mode"], "native")
