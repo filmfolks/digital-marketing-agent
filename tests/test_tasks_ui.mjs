@@ -81,4 +81,18 @@ test('drag to another day keeps time and offset', () => {
     assert.equal(T.moveToDay('2026-10-20T17:00:00+05:30', '2026-10-13'), '2026-10-13T17:00:00+05:30');
 });
 console.log(`\n${passed} passed, ${failed} failed`);
+test('task card shows the image preview and a Generate/Regenerate image button', () => {
+    const none = T.taskCardHtml({ id: 't3', title: 'x', status: 'approved', platforms: ['instagram'], media: [] });
+    assert.ok(none.includes('data-act="image"') && none.includes('Generate image') && none.includes('nt-media-missing'));
+    const withImg = T.taskCardHtml({ id: 't4', title: 'x', status: 'pending_approval', platforms: ['instagram'],
+        media: ['/a/data/brands/b/media/t4-instagram.png"onerror="x'], media_source: 'card' });
+    assert.ok(withImg.includes('Regenerate image') && withImg.includes('<img src="') && withImg.includes('brand card'));
+    assert.ok(!withImg.includes('"onerror'), 'media path is escaped');
+    assert.ok(T.mediaSrc('/x/y.png').includes('/activity/media?path=%2Fx%2Fy.png'));
+    assert.equal(T.mediaSrc('https://cdn/x.png'), 'https://cdn/x.png');
+    const done = T.taskCardHtml({ id: 't5', title: 'x', status: 'done', platforms: ['instagram'], media: ['/p.png'] });
+    assert.ok(!done.includes('data-act="image"'));
+    assert.deepEqual(T.imageEdits({ headline: ' Hi ', keywords: 'a, b,', bg: '', provider: 'card' }),
+        { headline: 'Hi', keywords: ['a', 'b'], provider: 'card' });
+});
 if (failed) process.exit(1);

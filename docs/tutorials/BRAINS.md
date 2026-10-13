@@ -38,6 +38,10 @@ See [CHAT_TASKS_CALENDAR.md](CHAT_TASKS_CALENDAR.md) and [HERMES.md](HERMES.md).
 - The older `agent/nexus_mcp.py` still exposes direct publishing tools. Give unattended models
   `nexus_tasks_mcp.py` instead.
 
+## Images (all brains)
+Every brain is told (through `skills/nexus/system_prompt.md`, which Antigravity, LM Studio/Ollama, cloud and Sho all receive, and through `skills/nexus/SKILL.md` for Hermes Agent) to attach an `image_brief` (headline ≤ 8 words, subline, CTA, style, stock keywords) to every post. It also learns the media rules (Instagram required; Facebook/LinkedIn preferred; X optional) and the tools for images: `generate_task_image` and `regenerate_task_image` (with `edits`). Small models never have to produce a picture themselves: `agent/nexus_media.py` attaches one at creation, at approval and before posting. Its chain is AI image API → Canva → stock → offline Pillow card. See [MEDIA.md](MEDIA.md).
+Image generation by provider: OpenAI (`gpt-image-1`), Gemini Imagen, xAI (`grok-2-image`) through their APIs when the keys are set. Local LLMs (LM Studio/Hermes) cannot generate images, so with them Nexus uses stock photos or the brand card. Antigravity's own `generate_image` output can be attached with `POST /tasks/<id>/update {"media": [path]}`.
+
 ## Approval rule (all brains)
 No brain publishes by itself. Tasks from Nexus Chat start as `pending_approval`, and only approved tasks are posted by the scheduler at their time. A brain's `post` job is created as `pending_approval`, and only the owner moves it forward: `brain_bridge.py approve <id> [--publish] [--dry-run]` or `POST /brain/approve`. In the UI, publishing is always a click by the user. Browser flows have `--dry-run`, which stops before the final Post/Share click.
 

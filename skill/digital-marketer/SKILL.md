@@ -256,6 +256,15 @@ When generating images with `generate_image`:
 - Always request the following in the prompt: Brand colors, text overlay (if any), style (minimalist/vibrant/dark/etc.), platform format (square 1:1 for IG, 16:9 for YT, 9:16 for Stories/Reels)
 - For carousels: Maintain visual consistency across all slides (same fonts, same color accents, same corner radius on elements)
 
+### Nexus task images (Antigravity / any brain working on Nexus tasks)
+- Every post you hand to Nexus carries an `image_brief`: headline (≤ 8 words), subline, CTA, style, 2–4 stock keywords.
+- Instagram always needs an image; Facebook/LinkedIn preferably; X optional. You never have to block on this:
+  Nexus attaches a picture itself (NEXUS_IMAGE_PROVIDERS chain: AI image API → Canva template → stock photo → offline brand card).
+- If you made a picture with `generate_image`, save it under `data/brands/<brand>/media/` and attach it with
+  `POST /tasks/<id>/update {"media": ["<absolute path>"]}`; otherwise call the `generate_task_image` /
+  `regenerate_task_image` tools (MCP `nexus-tasks`) or `POST /tasks/<id>/image {"edits": {...}}`.
+- Full rules and the edit fields: `skills/nexus/SKILL.md` → "Images: step by step", and `docs/tutorials/MEDIA.md`.
+
 ### Image Prompt Formula
 `[Style]: [Subject], [Mood], [Color palette], [Composition], [Platform format], professional social media graphic, no watermarks, 4K quality`
 

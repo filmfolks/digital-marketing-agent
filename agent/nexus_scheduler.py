@@ -56,6 +56,9 @@ def publish_runner(task: dict, *, dry_run: bool = False, run: Callable = subproc
     media = task.get("media") or []
     payload = {"platforms": task["platforms"], "content": task["content"], "media": media[0] if media else "",
                "source": f"task:{task['id']}"}
+    variants = {p: m for p, m in (task.get("media_variants") or {}).items() if m}
+    if variants:
+        payload["media_by_platform"] = variants      # right size per platform (IG 4:5, X 16:9, ...)
     jf.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     args = [sys.executable, str(ROOT / "agent" / "publish.py"), "--from-json", str(jf)]
     if dry_run:
@@ -88,7 +91,7 @@ def publish_runner(task: dict, *, dry_run: bool = False, run: Callable = subproc
 class Scheduler:
     def __init__(self, store: Optional[nt.TaskStore] = None, *, runner: Optional[Callable[[dict], dict]] = None,
                  clock: Optional[Callable[[], datetime]] = None, grace_minutes: Optional[float] = None,
-                 interval_s: float = 30.0, dry_run: Optional[bool] = None):
+                 interval_s: float = 30.0, dry_run: Optional[bool] = None, media: Optional[Callable] = "default"):
         self.store = store or nt.TaskStore()
         self.clock = clock or (lambda: nt.now())
         self.dry_run = (os.environ.get("NEXUS_SCHEDULER_DRY_RUN", "") in ("1", "true", "yes")) if dry_run is None else dry_run
@@ -96,6 +99,10 @@ class Scheduler:
         self.grace = timedelta(minutes=float(os.environ.get("NEXUS_SCHEDULER_GRACE_MIN", "120")
                                              if grace_minutes is None else grace_minutes))
         self.interval_s = interval_s
+        if media == "default":
+            import nexus_media
+            media = nexus_media.ensure
+        self.media = media                                    # None disables (tests)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._lock = nt.FileLock(self.store.root / "scheduler.lock", timeout=0.5, stale_s=max(120.0, interval_s * 4))
@@ -152,6 +159,7 @@ class Scheduler:
             claimed = self.store.claim(t["id"])
             if not claimed:
                 continue                                      # someone else is running it
+            claimed = self.ensure_media(claimed)
             try:
                 res = self.runner(claimed)
             except Exception as e:                            # noqa: BLE001
@@ -165,6 +173,25 @@ class Scheduler:
                                       error=str(res.get("error") or res.get("status") or "publish failed")[:500])
                 failed.append(t["id"])
         return {"at": self.last_tick, "ran": ran, "failed": failed, "missed": missed, "dry_run": self.dry_run}
+
+    def ensure_media(self, task: dict) -> dict:
+        """Right before posting: a platform that needs an image (Instagram) must have one.
+        Runs the full provider chain (NEXUS_IMAGE_PROVIDERS); the offline card renderer
+        is the last link, so a post never fails for missing media. Never raises."""
+        if not self.media:
+            return task
+        try:
+            import nexus_media
+            if not nexus_media.missing_for(task):
+                return task
+            res = self.media(task["id"], store=self.store, by="scheduler", when="before_post")
+            if not res.get("ok"):
+                res = self.media(task["id"], store=self.store, by="scheduler", when="before_post",
+                                 providers=["card"], force=True)
+            return self.store.get(task["id"])
+        except Exception as e:                                # noqa: BLE001 — post anyway, publish reports it
+            print(f"[scheduler] media for {task.get('id')}: {e}")
+            return task
 
     # ── background thread ──────────────────────────────────────────────────
     def start(self) -> bool:

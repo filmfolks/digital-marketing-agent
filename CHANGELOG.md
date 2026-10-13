@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## Unreleased: images never missing + Mac autostart
+- `agent/nexus_media.py`: media resolver at task creation, approval and right before posting. Provider chain `NEXUS_IMAGE_PROVIDERS` (OpenAI, Gemini Imagen, xAI, Canva autofill, Pexels/Unsplash/Pixabay/Openverse CC0, offline Pillow brand card). Per-platform sizes, `media_variants`, `media_source`, `image_brief`.
+- Scheduler renders the offline card if media is still missing for Instagram/Facebook/LinkedIn, then posts. The no-double-post guarantees are unchanged. `publish.py` takes `media_by_platform`.
+- Tools `generate_task_image` and `regenerate_task_image` (MCP + chat), `POST /tasks/<id>/image`, a preview and a Generate/Regenerate image button on task cards, and an `image_brief` field in every post schema.
+- `scripts/install_autostart_mac.sh`: LaunchAgents for the relay (waits for external volumes), the posting Chrome on port 9233, and `caffeinate -s -i`. `uninstall_daemon.sh --all`.
+- Docs: `docs/tutorials/MEDIA.md`, updated AUTOSTART/BRAINS, skill cards. Service worker cache v10.
+
 ## [Unreleased] — chat, tasks, calendar, campaigns
 
 ### Added

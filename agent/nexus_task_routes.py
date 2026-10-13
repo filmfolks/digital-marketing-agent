@@ -14,6 +14,8 @@ POST /tasks/<id>/update        {fields...}
 POST /tasks/<id>/approve       human approval  (approved; the scheduler posts it at scheduled_at)
 POST /tasks/<id>/unapprove     back to pending_approval
 POST /tasks/<id>/cancel
+POST /tasks/<id>/image         {edits?: {headline, subline, cta, style, keywords, bg, accent, fg}, provider?, force?}
+                               generate (or regenerate) the task image; keeps the approval status
 POST /tasks/approve-all        {ids?:[...], campaign_id?}
 POST /campaigns/<id>/auto-approve {value: bool}      explicit human opt-in
 POST /nexus/chat               {message, history?, brain:{provider,model,base_url,mode}, brand?}  SSE
@@ -34,7 +36,7 @@ import nexus_scheduler
 import nexus_tasks as nt
 import nexus_actions
 
-TASK_RE = re.compile(r"^/tasks/([A-Za-z0-9-]{3,64})(?:/(update|approve|unapprove|cancel))?$")
+TASK_RE = re.compile(r"^/tasks/([A-Za-z0-9-]{3,64})(?:/(update|approve|unapprove|cancel|image))?$")
 CAMP_RE = re.compile(r"^/campaigns/([A-Za-z0-9-]{3,64})/auto-approve$")
 
 
@@ -134,6 +136,22 @@ class TaskRoutesMixin:
                     t = store.transition(tid, "pending_approval", by="owner (ui)")
                 elif action == "cancel":
                     t = store.cancel(tid, by="owner (ui)")
+                elif action == "image":
+                    import nexus_media
+                    edits = dict(body.get("edits") or {})
+                    if body.get("provider"):
+                        edits["provider"] = body["provider"]
+                    cur = store.get(tid)
+                    force = bool(body.get("force", nexus_media.has_media(cur) or edits))
+                    if not nexus_media.media_platforms(cur.get("platforms") or []):
+                        edits["force_platform"] = True
+                    res = nexus_media.ensure(tid, store=store, by="user", when="ui", force=force, edits=edits or None)
+                    if not res.get("ok") and not res.get("skipped"):
+                        raise nt.TaskError(res.get("reason") or "image generation failed")
+                    t = res.get("task") or store.get(tid)
+                    self._reply(200, {"ok": True, "task": t, "source": res.get("source"),
+                                      "attempts": res.get("attempts", []), "skipped": res.get("reason") if res.get("skipped") else None})
+                    return True
                 else:
                     t = store.get(tid)
                 self._reply(200, {"ok": True, "task": t})

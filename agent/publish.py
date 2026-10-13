@@ -413,8 +413,9 @@ def publish_job(job: dict, dry_run: bool = False) -> dict:
         if dry_run:
             results.append({"platform": platform, "ok": True, "dry_run": True})
             continue
+        pmedia = (job.get("media_by_platform") or {}).get(platform) or media
         res = publish_with_fallback(
-            platform, text, c, media,
+            platform, text, c, pmedia,
             fallback=job.get("fallback", env_flag("NEXUS_BROWSER_FALLBACK", True)),
             browser_dry_run=bool(job.get("browser_dry_run")))
         res = {k: v for k, v in res.items() if v is not None}

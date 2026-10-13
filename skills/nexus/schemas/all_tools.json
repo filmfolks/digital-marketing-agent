@@ -90,6 +90,40 @@
             "type": "string",
             "maxLength": 600
           },
+          "image_brief": {
+            "type": "object",
+            "description": "Image brief for the post picture (always include it).",
+            "properties": {
+              "headline": {
+                "type": "string",
+                "maxLength": 80,
+                "description": "Big text on the image, max 8 words"
+              },
+              "subline": {
+                "type": "string",
+                "maxLength": 160,
+                "description": "One short supporting line"
+              },
+              "cta": {
+                "type": "string",
+                "maxLength": 30,
+                "description": "Button text, e.g. 'Download now'"
+              },
+              "style": {
+                "type": "string",
+                "maxLength": 300,
+                "description": "Look and mood: colours, photo vs. graphic, subject"
+              },
+              "keywords": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 6,
+                "description": "2-4 stock-photo search words, e.g. ['smartphone', 'bookmarks']"
+              }
+            }
+          },
           "scheduled_at": {
             "type": "string",
             "description": "ISO 8601 local date-time, e.g. 2026-10-20T18:30 (user timezone if no offset)"
@@ -208,6 +242,40 @@
                   "type": "string",
                   "maxLength": 600,
                   "description": "Visual / poster concept"
+                },
+                "image_brief": {
+                  "type": "object",
+                  "description": "Image brief for the post picture (always include it).",
+                  "properties": {
+                    "headline": {
+                      "type": "string",
+                      "maxLength": 80,
+                      "description": "Big text on the image, max 8 words"
+                    },
+                    "subline": {
+                      "type": "string",
+                      "maxLength": 160,
+                      "description": "One short supporting line"
+                    },
+                    "cta": {
+                      "type": "string",
+                      "maxLength": 30,
+                      "description": "Button text, e.g. 'Download now'"
+                    },
+                    "style": {
+                      "type": "string",
+                      "maxLength": 300,
+                      "description": "Look and mood: colours, photo vs. graphic, subject"
+                    },
+                    "keywords": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 6,
+                      "description": "2-4 stock-photo search words, e.g. ['smartphone', 'bookmarks']"
+                    }
+                  }
                 }
               },
               "required": [
@@ -314,6 +382,153 @@
           "instruction": {
             "type": "string",
             "maxLength": 2000
+          },
+          "image_brief": {
+            "type": "object",
+            "description": "Image brief for the post picture (always include it).",
+            "properties": {
+              "headline": {
+                "type": "string",
+                "maxLength": 80,
+                "description": "Big text on the image, max 8 words"
+              },
+              "subline": {
+                "type": "string",
+                "maxLength": 160,
+                "description": "One short supporting line"
+              },
+              "cta": {
+                "type": "string",
+                "maxLength": 30,
+                "description": "Button text, e.g. 'Download now'"
+              },
+              "style": {
+                "type": "string",
+                "maxLength": 300,
+                "description": "Look and mood: colours, photo vs. graphic, subject"
+              },
+              "keywords": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 6,
+                "description": "2-4 stock-photo search words, e.g. ['smartphone', 'bookmarks']"
+              }
+            }
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "generate_task_image",
+      "description": "Make the picture for a task if it has none (uses the task's image_brief; falls back to an offline brand card, so it always works). Returns the image path.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "minLength": 3
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "openai",
+              "gemini",
+              "xai",
+              "canva",
+              "stock",
+              "card"
+            ]
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "regenerate_task_image",
+      "description": "Redo a task's picture with changes the user asked for (new headline/subline/CTA text, colours, style, stock keywords or source). Regenerating the image of an approved post sends it back for approval.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "minLength": 3
+          },
+          "edits": {
+            "type": "object",
+            "description": "What to change on the image. Only send what changes.",
+            "properties": {
+              "headline": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "subline": {
+                "type": "string",
+                "maxLength": 160
+              },
+              "cta": {
+                "type": "string",
+                "maxLength": 30
+              },
+              "style": {
+                "type": "string",
+                "maxLength": 300
+              },
+              "keywords": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 6
+              },
+              "bg": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "description": "Background colour #RRGGBB"
+              },
+              "bg2": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "description": "Second gradient colour"
+              },
+              "fg": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "description": "Text colour"
+              },
+              "accent": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "description": "Button/accent colour"
+              },
+              "provider": {
+                "type": "string",
+                "enum": [
+                  "openai",
+                  "gemini",
+                  "xai",
+                  "canva",
+                  "stock",
+                  "card"
+                ],
+                "description": "Force one source; 'card' = offline text card (always works)"
+              }
+            },
+            "additionalProperties": false
           }
         },
         "required": [

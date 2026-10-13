@@ -9,7 +9,7 @@ Several posts: "plan the month", "3 posts for next week", "a launch campaign".
 1. Call research_brand (or get_brand_profile) once if you have not seen the brand yet.
 2. Decide the date range (whole month = first to last day; next week = Monday–Sunday).
 3. Spread posts evenly; no two posts on one platform at the same time.
-4. For EACH post: scheduled_at, platforms, caption, hashtags, poster_idea, short title.
+4. For EACH post: scheduled_at, platforms, caption, hashtags, poster_idea, image_brief, short title.
 5. Put ALL posts in ONE plan_campaign call (max 62).
 6. Answer with a 1–3 line summary; the user approves on the calendar.
 
@@ -83,6 +83,40 @@ Several posts: "plan the month", "3 posts for next week", "a launch campaign".
             "type": "string",
             "maxLength": 600,
             "description": "Visual / poster concept"
+          },
+          "image_brief": {
+            "type": "object",
+            "description": "Image brief for the post picture (always include it).",
+            "properties": {
+              "headline": {
+                "type": "string",
+                "maxLength": 80,
+                "description": "Big text on the image, max 8 words"
+              },
+              "subline": {
+                "type": "string",
+                "maxLength": 160,
+                "description": "One short supporting line"
+              },
+              "cta": {
+                "type": "string",
+                "maxLength": 30,
+                "description": "Button text, e.g. 'Download now'"
+              },
+              "style": {
+                "type": "string",
+                "maxLength": 300,
+                "description": "Look and mood: colours, photo vs. graphic, subject"
+              },
+              "keywords": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 6,
+                "description": "2-4 stock-photo search words, e.g. ['smartphone', 'bookmarks']"
+              }
+            }
           }
         },
         "required": [

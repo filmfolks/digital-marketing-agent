@@ -1,0 +1,31 @@
+{
+  "type": "function",
+  "function": {
+    "name": "generate_task_image",
+    "description": "Make the picture for a task if it has none (uses the task's image_brief; falls back to an offline brand card, so it always works). Returns the image path.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "minLength": 3
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "openai",
+            "gemini",
+            "xai",
+            "canva",
+            "stock",
+            "card"
+          ]
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

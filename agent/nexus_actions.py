@@ -30,6 +30,27 @@ sys.path.insert(0, str(ROOT / "agent"))
 import nexus_tasks as nt  # noqa: E402
 
 PLATFORM_ENUM = list(nt.PLATFORMS)
+BRIEF = {"type": "object", "description": "Image brief for the post picture (always include it).",
+         "properties": {
+             "headline": {"type": "string", "maxLength": 80, "description": "Big text on the image, max 8 words"},
+             "subline": {"type": "string", "maxLength": 160, "description": "One short supporting line"},
+             "cta": {"type": "string", "maxLength": 30, "description": "Button text, e.g. 'Download now'"},
+             "style": {"type": "string", "maxLength": 300, "description": "Look and mood: colours, photo vs. graphic, subject"},
+             "keywords": {"type": "array", "items": {"type": "string"}, "maxItems": 6,
+                          "description": "2-4 stock-photo search words, e.g. ['smartphone', 'bookmarks']"},
+         }}
+EDITS = {"type": "object", "description": "What to change on the image. Only send what changes.",
+         "properties": {
+             "headline": {"type": "string", "maxLength": 80}, "subline": {"type": "string", "maxLength": 160},
+             "cta": {"type": "string", "maxLength": 30}, "style": {"type": "string", "maxLength": 300},
+             "keywords": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
+             "bg": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Background colour #RRGGBB"},
+             "bg2": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Second gradient colour"},
+             "fg": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Text colour"},
+             "accent": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Button/accent colour"},
+             "provider": {"type": "string", "enum": ["openai", "gemini", "xai", "canva", "stock", "card"],
+                          "description": "Force one source; 'card' = offline text card (always works)"},
+         }, "additionalProperties": False}
 DT = {"type": "string", "description": "ISO 8601 local date-time, e.g. 2026-10-20T18:30 (user timezone if no offset)"}
 
 _post_item = {
@@ -41,6 +62,7 @@ _post_item = {
         "caption": {"type": "string", "minLength": 1, "maxLength": 2200, "description": "Final post text"},
         "hashtags": {"type": "array", "items": {"type": "string"}, "maxItems": 30},
         "poster_idea": {"type": "string", "maxLength": 600, "description": "Visual / poster concept"},
+        "image_brief": BRIEF,
     },
     "required": ["scheduled_at", "platforms", "caption"],
 }
@@ -64,6 +86,7 @@ TOOLS: Dict[str, dict] = {
             "caption": {"type": "string", "minLength": 1, "maxLength": 5000},
             "hashtags": {"type": "array", "items": {"type": "string"}, "maxItems": 30},
             "poster_idea": {"type": "string", "maxLength": 600},
+            "image_brief": BRIEF,
             "scheduled_at": DT,
             "title": {"type": "string", "maxLength": 120},
             "brand": {"type": "string"},
@@ -102,6 +125,21 @@ TOOLS: Dict[str, dict] = {
             "platforms": {"type": "array", "items": {"type": "string", "enum": PLATFORM_ENUM}},
             "hashtags": {"type": "array", "items": {"type": "string"}},
             "poster_idea": {"type": "string", "maxLength": 600}, "instruction": {"type": "string", "maxLength": 2000},
+            "image_brief": BRIEF,
+        }, "required": ["task_id"], "additionalProperties": False},
+    },
+    "generate_task_image": {
+        "description": "Make the picture for a task if it has none (uses the task's image_brief; falls back to an offline brand card, so it always works). Returns the image path.",
+        "parameters": {"type": "object", "properties": {
+            "task_id": {"type": "string", "minLength": 3},
+            "provider": {"type": "string", "enum": ["openai", "gemini", "xai", "canva", "stock", "card"]},
+        }, "required": ["task_id"], "additionalProperties": False},
+    },
+    "regenerate_task_image": {
+        "description": "Redo a task's picture with changes the user asked for (new headline/subline/CTA text, colours, style, stock keywords or source). Regenerating the image of an approved post sends it back for approval.",
+        "parameters": {"type": "object", "properties": {
+            "task_id": {"type": "string", "minLength": 3},
+            "edits": EDITS,
         }, "required": ["task_id"], "additionalProperties": False},
     },
     "cancel_task": {
@@ -297,7 +335,7 @@ class Executor:
     @staticmethod
     def _card(t: dict) -> dict:
         return {k: t.get(k) for k in ("id", "title", "status", "platforms", "scheduled_at", "content",
-                                      "hashtags", "poster_idea", "campaign_id")}
+                                      "hashtags", "poster_idea", "image_brief", "media", "media_source", "campaign_id")}
 
     def t_create_task(self, a):
         t = self._new({**a, "brand": self._brand(a)})
@@ -311,7 +349,7 @@ class Executor:
             content += "\n\n" + " ".join(missing)
         t = self._new({"title": a.get("title") or a["caption"][:60], "content": content, "platforms": a["platforms"],
                        "hashtags": tags, "poster_idea": a.get("poster_idea", ""), "scheduled_at": a.get("scheduled_at"),
-                       "brand": self._brand(a)})
+                       "image_brief": a.get("image_brief") or {}, "brand": self._brand(a)})
         return {"ok": True, "task": self._card(t), "note": "draft saved as pending_approval; nothing was posted"}
 
     def t_schedule_task(self, a):
@@ -348,10 +386,31 @@ class Executor:
                 content += "\n\n" + " ".join(extra)
             t = self._new({"title": p.get("title") or p["caption"][:60], "content": content, "platforms": p["platforms"],
                            "hashtags": tags, "poster_idea": p.get("poster_idea", ""), "scheduled_at": when,
-                           "brand": brand}, campaign_id=camp["id"])
+                           "image_brief": p.get("image_brief") or {}, "brand": brand}, campaign_id=camp["id"])
             cards.append(self._card(t))
         return {"ok": True, "campaign": camp, "tasks": cards,
                 "note": f"{len(cards)} posts saved as pending_approval. Ask the user to review and approve."}
+
+    def _image(self, task_id: str, *, force: bool, edits: Optional[dict]) -> dict:
+        import nexus_media
+        cur = self.store.get(task_id)
+        edits = dict(edits or {})
+        if not nexus_media.media_platforms(cur.get("platforms") or []):
+            edits["force_platform"] = True
+        res = nexus_media.ensure(task_id, store=self.store, by="model", when="tool", force=force, edits=edits or None)
+        t = res.get("task") or self.store.get(task_id)
+        if res.get("skipped"):
+            return {"ok": True, "task": self._card(t), "note": f"no new image: {res.get('reason')}. "
+                    "Use regenerate_task_image to change it."}
+        return {"ok": True, "task": self._card(t), "image": (t.get("media") or [None])[0], "source": res.get("source"),
+                "brief": res.get("brief"), "note": "image attached; the user sees it on the task card before approving"
+                + (" (the post went back to pending_approval)" if cur.get("status") == "approved" else "")}
+
+    def t_generate_task_image(self, a):
+        return self._image(a["task_id"], force=False, edits={"provider": a["provider"]} if a.get("provider") else None)
+
+    def t_regenerate_task_image(self, a):
+        return self._image(a["task_id"], force=True, edits=a.get("edits") or {})
 
     def t_list_tasks(self, a):
         start = nt.parse_when(a["start"]) if a.get("start") else None

@@ -45,6 +45,40 @@
         "instruction": {
           "type": "string",
           "maxLength": 2000
+        },
+        "image_brief": {
+          "type": "object",
+          "description": "Image brief for the post picture (always include it).",
+          "properties": {
+            "headline": {
+              "type": "string",
+              "maxLength": 80,
+              "description": "Big text on the image, max 8 words"
+            },
+            "subline": {
+              "type": "string",
+              "maxLength": 160,
+              "description": "One short supporting line"
+            },
+            "cta": {
+              "type": "string",
+              "maxLength": 30,
+              "description": "Button text, e.g. 'Download now'"
+            },
+            "style": {
+              "type": "string",
+              "maxLength": 300,
+              "description": "Look and mood: colours, photo vs. graphic, subject"
+            },
+            "keywords": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 6,
+              "description": "2-4 stock-photo search words, e.g. ['smartphone', 'bookmarks']"
+            }
+          }
         }
       },
       "required": [

@@ -57,7 +57,8 @@ TRANSITIONS: Dict[str, tuple] = {
 }
 PLATFORMS = ("x", "instagram", "facebook", "linkedin", "youtube", "blog")
 EDITABLE = ("title", "instruction", "platforms", "content", "media", "scheduled_at", "brand",
-            "hashtags", "poster_idea", "notes", "auto_approve")
+            "hashtags", "poster_idea", "notes", "auto_approve", "image_brief")
+BRIEF_KEYS = ("headline", "subline", "cta", "style", "keywords", "bg", "bg2", "fg", "accent", "handle")
 DEFAULT_TZ = "Asia/Kolkata"
 _FIXED = {"Asia/Kolkata": timedelta(hours=5, minutes=30), "Asia/Calcutta": timedelta(hours=5, minutes=30),
           "UTC": timedelta(0)}
@@ -169,6 +170,29 @@ class FileLock:
             pass
 
 
+def clean_brief(v) -> dict:
+    """image_brief: {headline (<=8 words), subline, cta, style, keywords[], colours}."""
+    if v in (None, ""):
+        return {}
+    if isinstance(v, str):
+        try:
+            v = json.loads(v)
+        except ValueError:
+            v = {"headline": v}
+    if not isinstance(v, dict):
+        raise TaskError("image_brief must be an object like {\"headline\": \"...\", \"cta\": \"...\"}")
+    out = {}
+    for k in BRIEF_KEYS:
+        if v.get(k) in (None, "", []):
+            continue
+        if k == "keywords":
+            kw = v[k] if isinstance(v[k], list) else str(v[k]).split(",")
+            out[k] = [str(x).strip()[:40] for x in kw if str(x).strip()][:8]
+        else:
+            out[k] = str(v[k]).strip()[:300]
+    return out
+
+
 def _log(action: str, task: dict, **extra) -> None:
     try:
         sys.path.insert(0, str(ROOT / "agent"))
@@ -195,8 +219,12 @@ class TaskStore:
     _locks_guard = threading.Lock()
 
     def __init__(self, root: Optional[Path] = None, *, clock: Optional[Callable[[], datetime]] = None,
-                 log: Callable = _log):
+                 log: Callable = _log, auto_media: Optional[bool] = None):
         self.root = Path(root) if root else data_root() / "tasks"
+        # Media resolver at creation/approval (agent/nexus_media.py). On by default for the
+        # real store; stores opened on an explicit folder (tests) opt in with auto_media=True.
+        env = os.environ.get("NEXUS_MEDIA_AUTO", "1") not in ("0", "false", "no")
+        self.auto_media = (env and root is None) if auto_media is None else auto_media
         self.path = self.root / "tasks.json"
         self.clock = clock or (lambda: now())
         self.log = log
@@ -272,6 +300,8 @@ class TaskStore:
                 v = [("#" + str(h).lstrip("#")).replace(" ", "") for h in (v if isinstance(v, list) else str(v).split()) if str(h).strip("# ")]
             elif k == "auto_approve":
                 v = bool(v)
+            elif k == "image_brief":
+                v = clean_brief(v)
             else:
                 v = "" if v is None else str(v)[:10000]
             out[k] = v
@@ -293,6 +323,7 @@ class TaskStore:
             "content": clean.get("content", ""), "media": clean.get("media", []),
             "hashtags": clean.get("hashtags", []), "poster_idea": clean.get("poster_idea", ""),
             "notes": clean.get("notes", ""), "scheduled_at": clean.get("scheduled_at"),
+            "image_brief": clean.get("image_brief", {}),
             "status": status, "auto_approve": False, "brain": brain or "", "campaign_id": campaign_id,
             "results": [], "created_by": by, "created_at": stamp, "updated_at": stamp,
             "history": [{"at": stamp, "event": "created", "status": status, "by": by}],
@@ -308,7 +339,46 @@ class TaskStore:
             data["tasks"][task["id"]] = task
             self._save(data)
         self.log("task_created", task)
+        self._auto_media(task, "created")
         return task
+
+    def _auto_media(self, task: dict, when: str, *, wait: bool = False) -> None:
+        if not self.auto_media or task.get("status") in ("done", "cancelled"):
+            return
+        try:
+            import nexus_media
+            if not nexus_media.missing_for(task):
+                return
+            if wait:
+                nexus_media.ensure(task["id"], store=self, by="nexus", when=when)
+            else:
+                nexus_media.ensure_async(task["id"], store=self, by="nexus", when=when)
+        except Exception as e:                                  # noqa: BLE001 — never blocks the task itself
+            print(f"[tasks] media for {task.get('id')}: {e}", file=sys.stderr)
+
+    def set_media(self, task_id: str, media: List[str], *, variants: Optional[dict] = None, source: str = "",
+                  brief: Optional[dict] = None, by: str = "nexus", when: str = "", attempts=None) -> dict:
+        """Attach generated media. Keeps the status (an image is the picture the human
+        reviews, not new copy) — except when the MODEL regenerates the image of an
+        approved post: that goes back for approval like any model edit."""
+        clean_media = [str(m) for m in media if m]
+
+        def fn(task, _data):
+            if task["status"] in ("done", "cancelled"):
+                raise TaskError(f"task is {task['status']}; media can no longer change")
+            task["media"] = clean_media
+            task["media_variants"] = dict(variants or {})
+            task["media_source"] = source
+            if brief is not None:
+                task["image_brief"] = clean_brief(brief)
+            back = task["status"] == "approved" and by in ("model", "brain")
+            if back:
+                task["status"] = "pending_approval"
+            return {"event": "media", "source": source, "when": when, "by": by, "media": clean_media[:1],
+                    "status": task["status"],
+                    **({"attempts": [a.get("provider") + (":ok" if a.get("ok") else ":skip" if a.get("skipped") else ":fail")
+                                     for a in (attempts or [])]} if attempts else {})}
+        return self._mutate(task_id, fn, "task_media", media_source=source, media_when=when)
 
     def get(self, task_id: str) -> dict:
         task = self._load()["tasks"].get(str(task_id))
@@ -371,7 +441,10 @@ class TaskStore:
             if task["status"] == "approved" and set(changed) - {"scheduled_at", "notes"} and by not in ("user", "owner", "ui"):
                 task["status"] = "pending_approval"
             return {"event": "updated", "fields": changed, "by": by, "status": task["status"]}
-        return self._mutate(task_id, fn, "task_updated")
+        t = self._mutate(task_id, fn, "task_updated")
+        if {"platforms", "media"} & set(clean):
+            self._auto_media(t, "updated")
+        return t
 
     def transition(self, task_id: str, to: str, *, by: str = "user", expect: Optional[str] = None,
                    **info) -> dict:
@@ -405,7 +478,16 @@ class TaskStore:
         return self._mutate(task_id, fn, f"task_{to}", status=status)
 
     def approve(self, task_id: str, *, by: str = "user") -> dict:
-        return self.transition(task_id, "approved", by=by)
+        t = self.transition(task_id, "approved", by=by)
+        if self.auto_media:
+            try:
+                import nexus_media
+                if nexus_media.missing_for(t):
+                    self._auto_media(t, "approved", wait=True)
+                    t = self.get(task_id)
+            except Exception as e:                              # noqa: BLE001
+                print(f"[tasks] media at approval {task_id}: {e}", file=sys.stderr)
+        return t
 
     def cancel(self, task_id: str, *, by: str = "user") -> dict:
         return self.transition(task_id, "cancelled", by=by)

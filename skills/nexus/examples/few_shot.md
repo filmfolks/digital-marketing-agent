@@ -50,3 +50,28 @@ model (≤ 8B) struggles; `tests/test_nexus_skills.py` checks that every tool ca
 <tool_call>
 {"name": "schedule_task", "arguments": {"task_id": "t-20261013-2b3c4d5e", "scheduled_at": "2026-10-22T18:00"}}
 </tool_call>
+
+## 4. Changing the picture
+**user:** make the Totag image green and change the button to "Try it free"
+
+**assistant:**
+<tool_call>
+{"name": "list_tasks", "arguments": {"limit": 20}}
+</tool_call>
+
+**tool:**
+<tool_response>
+{"name": "list_tasks", "content": {"ok": true, "tasks": [{"id": "t-20261013-1ed77d95", "title": "Totag AI Bookmark — Instagram Ad", "status": "pending_approval"}]}}
+</tool_response>
+
+**assistant:**
+<tool_call>
+{"name": "regenerate_task_image", "arguments": {"task_id": "t-20261013-1ed77d95", "edits": {"bg": "#14532D", "bg2": "#166534", "cta": "Try it free"}}}
+</tool_call>
+
+**tool:**
+<tool_response>
+{"name": "regenerate_task_image", "content": {"ok": true, "image": "/…/data/brands/thoshotech/media/t-20261013-1ed77d95-instagram-20261013-101500.png", "source": "card"}}
+</tool_response>
+
+**assistant:** Done — the Totag post now has a green image with a "Try it free" button. Check it on the task card before approving.

@@ -3,7 +3,7 @@
  * ===================================
  * Talks to the relay (agent/nexus_task_routes.py):
  *   POST /nexus/chat (SSE)  GET /tasks  GET /calendar  POST /tasks/<id>/{update,approve,cancel}
- *   POST /tasks/approve-all  GET /calendar.ics
+ *   POST /tasks/approve-all  GET /calendar.ics  POST /tasks/<id>/image (generate / regenerate picture)
  *
  * Nothing here posts. Approve = "the scheduler may post this at its time".
  * Pure helpers are exposed on window.NexusTasksUI.__internals for tests/test_tasks_ui.mjs.
@@ -132,6 +132,24 @@
     function badge(status) {
         return `<span class="nt-badge nt-${esc(status)}">${esc(STATUS_LABEL[status] || status)}</span>`;
     }
+    /** URL the <img> can load: relay /activity/media for local files (token as query, <img> has no headers). */
+    function mediaSrc(m) {
+        if (!m) return '';
+        if (/^https?:\/\//.test(m)) return m;
+        const base = typeof window.relayUrl === 'function' ? window.relayUrl() : '';
+        const tok = typeof window.relayToken === 'function' ? window.relayToken() : '';
+        return `${base}/activity/media?path=${encodeURIComponent(m)}${tok ? `&token=${encodeURIComponent(tok)}` : ''}`;
+    }
+    const MEDIA_SOURCE_LABEL = { card: 'brand card (offline)', stock: 'stock photo', openai: 'OpenAI image', gemini: 'Imagen',
+        xai: 'xAI image', canva: 'Canva', '': 'uploaded' };
+    function mediaHtml(t) {
+        const m = (t.media || [])[0];
+        if (!m) return (t.platforms || []).includes('instagram')
+            ? '<div class="nt-media nt-media-missing"><i class="ph ph-image"></i> No image yet — Instagram needs one (Nexus makes a brand card at the latest before posting).</div>' : '';
+        const extra = Math.max(0, (t.media || []).length - 1);
+        return `<div class="nt-media"><img src="${esc(mediaSrc(m))}" alt="Post image preview" loading="lazy">
+            <span class="nt-media-src">${esc(MEDIA_SOURCE_LABEL[t.media_source || ''] || t.media_source)}${extra ? ` · +${extra} size${extra > 1 ? 's' : ''}` : ''}</span></div>`;
+    }
     function taskCardHtml(t) {
         const when = t.scheduled_at ? `${dayOf(t.scheduled_at)} ${timeOf(t.scheduled_at)}` : 'not scheduled';
         const plats = (t.platforms || []).map(p => `<span class="nt-plat">${esc(p)}</span>`).join(' ');
@@ -142,11 +160,13 @@
             <div class="nt-meta"><i class="ph ph-clock"></i> ${esc(when)} ${plats}</div>
             ${t.content ? `<div class="nt-content">${esc(t.content)}</div>` : ''}
             ${t.poster_idea ? `<div class="nt-poster"><i class="ph ph-image"></i> ${esc(t.poster_idea)}</div>` : ''}
+            ${mediaHtml(t)}
             ${t.error ? `<div class="nt-error">${esc(t.error)}</div>` : ''}
             <div class="nt-actions">
                 ${canApprove ? `<button class="btn btn-primary btn-sm" data-act="approve">Approve</button>` : ''}
                 ${t.status === 'approved' ? `<button class="btn btn-ghost btn-sm" data-act="unapprove">Unapprove</button>` : ''}
                 ${editable ? `<button class="btn btn-ghost btn-sm" data-act="edit">Edit</button>
+                <button class="btn btn-ghost btn-sm" data-act="image">${(t.media || []).length ? 'Regenerate image' : 'Generate image'}</button>
                 <input type="datetime-local" class="nt-when" value="${esc(toLocalInput(t.scheduled_at))}" data-orig="${esc(t.scheduled_at || '')}" aria-label="Schedule">
                 <button class="btn btn-ghost btn-sm" data-act="schedule">Schedule</button>
                 <button class="btn btn-ghost btn-sm" data-act="cancel">Cancel</button>` : ''}
@@ -189,6 +209,8 @@
             t = await act(id, 'update', { scheduled_at: when });
         } else if (a === 'edit') {
             t = await editTask(id);
+        } else if (a === 'image') {
+            t = await imageDialog(id);
         }
         if (t) {
             card.outerHTML = taskCardHtml(t);
@@ -224,6 +246,62 @@
                 if (!Object.keys(diff).length) { toast('Nothing changed', 'info'); return; }
                 const r = await act(id, 'update', diff);
                 if (r) { wrap.remove(); resolve(r); }
+            });
+        });
+    }
+
+    /** Generate / regenerate the task picture with optional text, colour and source edits. */
+    function imageEdits(form) {
+        const out = {};
+        for (const k of ['headline', 'subline', 'cta', 'style', 'keywords', 'bg', 'accent', 'fg', 'provider']) {
+            const v = (form[k] ?? '').trim();
+            if (!v) continue;
+            out[k] = k === 'keywords' ? v.split(',').map(x => x.trim()).filter(Boolean) : v;
+        }
+        return out;
+    }
+    async function imageDialog(id) {
+        let t;
+        try { t = (await call(`/tasks/${encodeURIComponent(id)}`)).task; } catch (e) { toast(e.message, 'error'); return null; }
+        const b = t.image_brief || {};
+        return new Promise(resolve => {
+            const wrap = document.createElement('div');
+            wrap.className = 'modal-overlay';
+            const row = (k, label, val, ph = '') => `<label>${label}<input class="form-input" name="${k}" value="${esc(val || '')}" placeholder="${esc(ph)}"></label>`;
+            wrap.innerHTML = `<div class="modal-card glass-card nt-modal">
+                <h3>${(t.media || []).length ? 'Regenerate' : 'Generate'} image</h3>
+                ${mediaHtml(t)}
+                ${row('headline', 'Headline (max 8 words)', b.headline, 'auto from the post')}
+                ${row('subline', 'Subline', b.subline)}
+                ${row('cta', 'Button text', b.cta, 'Learn more')}
+                ${row('style', 'Style', b.style)}
+                ${row('keywords', 'Stock photo keywords (comma separated)', (b.keywords || []).join(', '))}
+                <div class="nt-plats">${row('bg', 'Background', b.bg, '#0B1F3A')} ${row('accent', 'Accent', b.accent, '#FFB703')} ${row('fg', 'Text', b.fg, '#FFFFFF')}</div>
+                <label>Source<select class="form-input" name="provider"><option value="">Best available (AI → Canva → stock → card)</option>
+                    <option value="card">Brand card (offline)</option><option value="stock">Stock photo + text</option>
+                    <option value="openai">OpenAI</option><option value="gemini">Gemini / Imagen</option><option value="xai">xAI</option><option value="canva">Canva template</option></select></label>
+                <p class="helper-text">The picture is shown on the card so you can check it before approving. Approval stays as it is.</p>
+                <div class="nt-actions"><button class="btn btn-primary btn-sm" data-m="go">Generate</button>
+                <button class="btn btn-ghost btn-sm" data-m="close">Close</button></div></div>`;
+            document.body.appendChild(wrap);
+            wrap.addEventListener('click', async e => {
+                const m = e.target.dataset.m;
+                if (e.target === wrap || m === 'close') { wrap.remove(); return resolve(null); }
+                if (m !== 'go') return;
+                const form = Object.fromEntries([...wrap.querySelectorAll('[name]')].map(i => [i.name, i.value]));
+                const edits = imageEdits(form);
+                e.target.disabled = true;
+                e.target.textContent = 'Generating…';
+                try {
+                    const r = await call(`/tasks/${encodeURIComponent(id)}/image`, { edits, force: true }, { ms: 180000 });
+                    toast(`Image ready (${MEDIA_SOURCE_LABEL[r.source] || r.source || 'unchanged'})`, 'success');
+                    wrap.remove();
+                    resolve(r.task);
+                } catch (err) {
+                    toast(err.message, 'error');
+                    e.target.disabled = false;
+                    e.target.textContent = 'Generate';
+                }
             });
         });
     }
@@ -421,6 +499,6 @@
 
     window.NexusTasksUI = {
         onPage,
-        __internals: { esc, monthGrid, weekOf, groupByDay, moveToDay, parseSSE, brainFromSettings, taskCardHtml, dayOf, timeOf, toLocalInput, fromLocalInput, changedFields, sameTime },
+        __internals: { esc, monthGrid, weekOf, groupByDay, moveToDay, parseSSE, brainFromSettings, taskCardHtml, mediaSrc, mediaHtml, imageEdits, dayOf, timeOf, toLocalInput, fromLocalInput, changedFields, sameTime },
     };
 })();

@@ -48,6 +48,23 @@ class TaskRoutes(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read().decode() or "{}")
 
+    def test_generate_and_regenerate_image_keeps_approval(self):
+        st, r = self.call("/tasks", {"title": "IG", "content": "Hello. Download now", "platforms": ["instagram"],
+                                     "scheduled_at": "2030-01-05T10:00"})
+        tid = r["task"]["id"]
+        st, r = self.call(f"/tasks/{tid}/approve", {})
+        self.assertEqual(r["task"]["status"], "approved")
+        self.assertTrue(r["task"]["media"])                           # resolver ran at approval
+        first = r["task"]["media"][0]
+        st, r = self.call(f"/tasks/{tid}/image", {"edits": {"headline": "Fresh text", "accent": "#00AA00"}})
+        self.assertEqual(st, 200)
+        self.assertEqual((r["task"]["status"], r["source"]), ("approved", "card"))
+        self.assertEqual(r["task"]["image_brief"]["headline"], "Fresh text")
+        st, r = self.call(f"/tasks/{tid}/image", {"edits": {"accent": "green"}})
+        self.assertEqual(st, 400)
+        st, _ = self.call(f"/tasks/{tid}/image", {}, token="wrong")
+        self.assertEqual(st, 401)
+
     def test_crud_approve_calendar_ics(self):
         st, r = self.call("/tasks", {"title": "Launch", "content": "Hello", "platforms": ["x"],
                                      "scheduled_at": "2030-01-05T10:00", "status": "approved"})

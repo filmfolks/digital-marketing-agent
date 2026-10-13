@@ -51,3 +51,7 @@ _os.environ.setdefault("NEXUS_ACTIVITY_LOG", _os.path.join(__import__("tempfile"
 _os.environ.setdefault("NEXUS_DATA_DIR", __import__("tempfile").mkdtemp(prefix="nexus-data-"))
 _os.environ.setdefault("NEXUS_TZ", "Asia/Kolkata")
 _os.environ.setdefault("NEXUS_LINK_MEMORY", _os.path.join(__import__("tempfile").mkdtemp(prefix="nexus-links-"), "link_memory.json"))
+# Images (agent/nexus_media.py): offline card renderer only, no network, throwaway folder.
+_os.environ.setdefault("NEXUS_IMAGE_PROVIDERS", "card")
+_os.environ.setdefault("NEXUS_STOCK_KEYLESS", "0")
+_os.environ.setdefault("NEXUS_MEDIA_DIR", __import__("tempfile").mkdtemp(prefix="nexus-media-"))

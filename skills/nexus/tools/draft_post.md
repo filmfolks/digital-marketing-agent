@@ -11,8 +11,9 @@ The user wants ONE post ("write a post", "tweet about…", "an Instagram post fo
 3. Write the caption for that platform (X ≤ 280 chars incl. hashtags).
 4. Add 3–8 hashtags: broad + niche + local SEO.
 5. Add a one-sentence poster_idea.
-6. Set scheduled_at only if the user gave a day/time or asked to schedule it.
-7. Call draft_post once. Tell the user it awaits approval.
+6. ALWAYS add image_brief: headline (max 8 words), subline (one line), cta (2-3 words), style, keywords (2-4 stock-photo words).
+7. Set scheduled_at only if the user gave a day/time or asked to schedule it.
+8. Call draft_post once. Tell the user it awaits approval.
 
 ## Arguments (JSON Schema)
 ```json
@@ -50,6 +51,40 @@ The user wants ONE post ("write a post", "tweet about…", "an Instagram post fo
       "type": "string",
       "maxLength": 600
     },
+    "image_brief": {
+      "type": "object",
+      "description": "Image brief for the post picture (always include it).",
+      "properties": {
+        "headline": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Big text on the image, max 8 words"
+        },
+        "subline": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "One short supporting line"
+        },
+        "cta": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Button text, e.g. 'Download now'"
+        },
+        "style": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Look and mood: colours, photo vs. graphic, subject"
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 6,
+          "description": "2-4 stock-photo search words, e.g. ['smartphone', 'bookmarks']"
+        }
+      }
+    },
     "scheduled_at": {
       "type": "string",
       "description": "ISO 8601 local date-time, e.g. 2026-10-20T18:30 (user timezone if no offset)"
@@ -73,7 +108,7 @@ The user wants ONE post ("write a post", "tweet about…", "an Instagram post fo
 ## Example call
 ```
 <tool_call>
-{"name": "draft_post", "arguments": {"platforms": ["instagram"], "caption": "Double smash, double cheese, zero regrets. Our new Midnight Melt drops Friday — who's in? 🍔", "hashtags": ["#burger", "#smashburger", "#bangalorefood", "#midnightmelt"], "poster_idea": "Close-up of the burger with dripping cheese on a dark background, neon text 'MIDNIGHT MELT'.", "scheduled_at": "2026-10-23T19:00"}}
+{"name": "draft_post", "arguments": {"platforms": ["instagram"], "caption": "Double smash, double cheese, zero regrets. Our new Midnight Melt drops Friday — who's in? 🍔", "hashtags": ["#burger", "#smashburger", "#bangalorefood", "#midnightmelt"], "poster_idea": "Close-up of the burger with dripping cheese on a dark background, neon text 'MIDNIGHT MELT'.", "image_brief": {"headline": "Double smash. Double cheese.", "subline": "The Midnight Melt drops Friday", "cta": "Order now", "style": "dark moody food photo, neon accent", "keywords": ["burger", "cheese"]}, "scheduled_at": "2026-10-23T19:00"}}
 </tool_call>
 ```
 
