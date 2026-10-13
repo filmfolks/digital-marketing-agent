@@ -13,7 +13,7 @@
 
     const PLATFORMS = ['x', 'instagram', 'facebook', 'linkedin', 'youtube', 'blog'];
     const STATUS_LABEL = {
-        draft: 'Draft', pending_approval: 'Needs approval', approved: 'Approved', running: 'Posting…',
+        draft: 'Draft', pending_approval: 'Needs approval', approved: 'Approved · waiting for posted', running: 'Posting…',
         done: 'Posted', failed: 'Failed', cancelled: 'Cancelled',
     };
     const BRAIN_CHOICES = [
@@ -491,14 +491,292 @@
         loadTasks();
     }
 
+    /* ── Desktop notification helper ───────────────────────────────────────── */
+    function notifyDesktop(title, body) {
+        if (typeof window === 'undefined' || !('Notification' in window)) return;
+        try {
+            if (Notification.permission === 'granted') {
+                new Notification(title, { body });
+            } else if (Notification.permission !== 'denied') {
+                Notification.requestPermission().then(perm => {
+                    if (perm === 'granted') new Notification(title, { body });
+                }).catch(() => {});
+            }
+        } catch {}
+    }
+
+    /* ── Unposted / Failed Tasks Popup Modal (#ntUnpostedPopup) ─────────────── */
+    function showUnpostedPopup(unpostedTasks) {
+        if (typeof document === 'undefined' || !unpostedTasks || !unpostedTasks.length) return;
+        let popup = document.getElementById('ntUnpostedPopup');
+        if (!popup) {
+            popup = document.createElement('div');
+            popup.id = 'ntUnpostedPopup';
+            popup.className = 'modal-overlay';
+            document.body.appendChild(popup);
+        }
+
+        const now = Date.now();
+        popup.innerHTML = `<div class="modal-card glass-card nt-modal nt-unposted-card" style="width:560px;max-width:95vw;max-height:85vh;overflow-y:auto;">
+            <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:12px;">
+                <h3 style="margin:0;color:#f87171;display:flex;align-items:center;gap:8px;">
+                    <i class="ph ph-warning-circle" style="font-size:20px;"></i> Unposted / Overdue Tasks (${unpostedTasks.length})
+                </h3>
+                <button class="btn btn-ghost btn-sm" data-act="dismiss-all" title="Dismiss all" style="font-size:18px;line-height:1;padding:4px 8px;">&times;</button>
+            </div>
+            <p style="font-size:12px;opacity:.8;margin:6px 0 10px;">
+                These scheduled posts have failed or passed their scheduled publishing time without completing.
+            </p>
+            <div class="nt-unposted-list" style="display:flex;flex-direction:column;gap:12px;">
+                ${unpostedTasks.map(t => {
+                    const when = t.scheduled_at ? `${dayOf(t.scheduled_at)} ${timeOf(t.scheduled_at)}` : 'Not scheduled';
+                    const plats = (t.platforms || []).map(p => `<span class="nt-plat">${esc(p)}</span>`).join(' ');
+                    const isOverdue = t.status === 'approved' && t.scheduled_at && (now - new Date(t.scheduled_at).getTime()) > 60000;
+                    const overdueMins = isOverdue ? Math.max(1, Math.round((now - new Date(t.scheduled_at).getTime()) / 60000)) : 0;
+                    const reason = t.status === 'failed'
+                        ? (t.error || 'Execution failed (locator timeout, network issue, or platform error)')
+                        : `Missed scheduled window (scheduled ${overdueMins}m ago at ${when} · relay or runner may have stalled)`;
+                    return `<div class="nt-unposted-item" data-task="${esc(t.id)}" style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                            <strong>${esc(t.title || 'Untitled task')}</strong>
+                            ${badge(t.status)}
+                        </div>
+                        <div style="font-size:12px;opacity:.8;"><i class="ph ph-clock"></i> ${esc(when)} ${plats}</div>
+                        <div style="color:#fca5a5;background:rgba(239,68,68,.1);border-left:3px solid #ef4444;padding:6px 10px;border-radius:4px;font-size:12px;word-break:break-word;">
+                            <strong>Reason:</strong> ${esc(reason)}
+                        </div>
+                        <div class="nt-actions" style="margin-top:4px;">
+                            <button class="btn btn-primary btn-sm" data-act="kickstart" data-task="${esc(t.id)}">Post Now / Kickstart</button>
+                            <button class="btn btn-ghost btn-sm" data-act="reschedule" data-task="${esc(t.id)}">Reschedule</button>
+                            <button class="btn btn-ghost btn-sm" data-act="dismiss" data-task="${esc(t.id)}">Dismiss</button>
+                        </div>
+                    </div>`;
+                }).join('')}
+            </div>
+        </div>`;
+
+        if (popup.classList) popup.classList.remove('hidden');
+
+        const closePopup = () => {
+            if (popup.classList) popup.classList.add('hidden');
+            popup.innerHTML = '';
+        };
+
+        popup.onclick = async e => {
+            const btn = e.target?.closest ? e.target.closest('[data-act]') : null;
+            if (!btn) return;
+            const actType = btn.dataset.act;
+            const taskId = btn.dataset.task;
+
+            if (actType === 'dismiss-all') {
+                const dismissed = NexusTaskTimer.getDismissedSignatures();
+                unpostedTasks.forEach(t => dismissed.add(NexusTaskTimer.taskSignature(t)));
+                NexusTaskTimer.saveDismissedSignatures(dismissed);
+                closePopup();
+                return;
+            }
+
+            const task = unpostedTasks.find(t => t.id === taskId);
+            if (!task) return;
+
+            if (actType === 'dismiss') {
+                const dismissed = NexusTaskTimer.getDismissedSignatures();
+                dismissed.add(NexusTaskTimer.taskSignature(task));
+                NexusTaskTimer.saveDismissedSignatures(dismissed);
+                const item = btn.closest ? btn.closest('.nt-unposted-item') : null;
+                item?.remove?.();
+                if (!popup.querySelector || !popup.querySelector('.nt-unposted-item')) closePopup();
+            } else if (actType === 'reschedule') {
+                const dismissed = NexusTaskTimer.getDismissedSignatures();
+                dismissed.add(NexusTaskTimer.taskSignature(task));
+                NexusTaskTimer.saveDismissedSignatures(dismissed);
+                closePopup();
+                await editTask(task.id);
+                NexusTaskTimer.refreshActiveView();
+            } else if (actType === 'kickstart') {
+                btn.disabled = true;
+                btn.textContent = 'Kickstarting…';
+                try {
+                    if (task.status === 'failed') {
+                        await act(task.id, 'approve');
+                    }
+                    await call('/scheduler/tick', { dry_run: false });
+                    toast(`Kickstarted post for "${task.title || task.id}"`, 'success');
+                    const dismissed = NexusTaskTimer.getDismissedSignatures();
+                    dismissed.add(NexusTaskTimer.taskSignature(task));
+                    NexusTaskTimer.saveDismissedSignatures(dismissed);
+                    const item = btn.closest ? btn.closest('.nt-unposted-item') : null;
+                    item?.remove?.();
+                    if (!popup.querySelector || !popup.querySelector('.nt-unposted-item')) closePopup();
+                    NexusTaskTimer.refreshActiveView();
+                } catch (err) {
+                    toast(`Kickstart failed: ${err.message}`, 'error');
+                    btn.disabled = false;
+                    btn.textContent = 'Post Now / Kickstart';
+                }
+            }
+        };
+    }
+
+    /* ── Robust Client-side Scheduler Timer (NexusTaskTimer) ─────────────────── */
+    const NexusTaskTimer = (() => {
+        let timerId = null;
+        let isRunning = false;
+        let busy = false;
+        const INTERVAL_MS = 20000;
+
+        function getDismissedSignatures() {
+            try {
+                if (typeof sessionStorage !== 'undefined') {
+                    return new Set(JSON.parse(sessionStorage.getItem('nt_dismissed_alerts') || '[]'));
+                }
+            } catch {}
+            return new Set();
+        }
+
+        function saveDismissedSignatures(set) {
+            try {
+                if (typeof sessionStorage !== 'undefined') {
+                    sessionStorage.setItem('nt_dismissed_alerts', JSON.stringify([...set].slice(-200)));
+                }
+            } catch {}
+        }
+
+        function taskSignature(t) {
+            return `${t.id}:${t.status}:${t.error || ''}:${t.scheduled_at || ''}`;
+        }
+
+        function refreshActiveView() {
+            if (typeof document === 'undefined') return;
+            const pageTasks = document.getElementById('page-tasks');
+            if (pageTasks?.classList.contains('active')) loadTasks();
+            const pageCal = document.getElementById('page-taskcal');
+            if (pageCal?.classList.contains('active')) loadCalendar();
+            const pageAct = document.getElementById('page-activity');
+            if (pageAct?.classList.contains('active')) window.loadActivity?.();
+        }
+
+        async function tick() {
+            if (busy) return;
+            busy = true;
+            try {
+                let r;
+                try {
+                    r = await call('/tasks');
+                } catch {
+                    return; // Relay offline/unreachable
+                }
+                let tasks = r?.tasks || [];
+                const now = Date.now();
+
+                // Due approved tasks (scheduled_at <= now)
+                const dueTasks = tasks.filter(t =>
+                    t.status === 'approved' &&
+                    t.scheduled_at &&
+                    new Date(t.scheduled_at).getTime() <= now
+                );
+
+                let didKickstart = false;
+                if (dueTasks.length > 0) {
+                    try {
+                        await call('/scheduler/tick', { dry_run: false });
+                        didKickstart = true;
+                        const ref = await call('/tasks');
+                        tasks = ref?.tasks || [];
+                    } catch (err) {
+                        console.warn('[NexusTaskTimer] scheduler tick failed:', err);
+                    }
+                }
+
+                if (didKickstart) {
+                    refreshActiveView();
+                }
+
+                // Detect unposted / failed tasks:
+                // - status === 'failed'
+                // - status === 'approved' and overdue by >1 minute (60000ms)
+                const unposted = tasks.filter(t => {
+                    if (t.status === 'failed') return true;
+                    if (t.status === 'approved' && t.scheduled_at) {
+                        return (now - new Date(t.scheduled_at).getTime()) > 60000;
+                    }
+                    return false;
+                });
+
+                const dismissed = getDismissedSignatures();
+                const alertable = unposted.filter(t => !dismissed.has(taskSignature(t)));
+
+                if (alertable.length > 0) {
+                    for (const t of alertable) {
+                        const reason = t.status === 'failed'
+                            ? (t.error || 'Publishing failed')
+                            : `Overdue by >1 min (scheduled for ${timeOf(t.scheduled_at)})`;
+                        notifyDesktop('Nexus: Unposted / Failed Task', `"${t.title || t.id}" (${(t.platforms || []).join(', ')}) · ${reason}`);
+                    }
+                    showUnpostedPopup(alertable);
+                }
+            } finally {
+                busy = false;
+            }
+        }
+
+        function start() {
+            if (isRunning) return;
+            isRunning = true;
+            tick();
+            if (typeof window !== 'undefined') {
+                timerId = window.setInterval(tick, INTERVAL_MS);
+            }
+        }
+
+        function stop() {
+            if (!isRunning) return;
+            isRunning = false;
+            if (typeof window !== 'undefined' && timerId) {
+                window.clearInterval(timerId);
+                timerId = null;
+            }
+        }
+
+        return {
+            start,
+            stop,
+            tick,
+            isRunning: () => isRunning,
+            getDismissedSignatures,
+            saveDismissedSignatures,
+            taskSignature,
+            refreshActiveView,
+        };
+    })();
+
     function onPage(id) {
         if (id === 'chat') initChat();
         if (id === 'taskcal') initCalendar();
         if (id === 'tasks') initTasks();
     }
 
+    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => NexusTaskTimer.start());
+        } else {
+            NexusTaskTimer.start();
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) NexusTaskTimer.tick();
+        });
+        window.addEventListener('online', () => {
+            NexusTaskTimer.tick();
+        });
+    }
+
     window.NexusTasksUI = {
         onPage,
-        __internals: { esc, monthGrid, weekOf, groupByDay, moveToDay, parseSSE, brainFromSettings, taskCardHtml, mediaSrc, mediaHtml, imageEdits, dayOf, timeOf, toLocalInput, fromLocalInput, changedFields, sameTime },
+        NexusTaskTimer,
+        showUnpostedPopup,
+        __internals: {
+            esc, monthGrid, weekOf, groupByDay, moveToDay, parseSSE, brainFromSettings, taskCardHtml, mediaSrc, mediaHtml, imageEdits, dayOf, timeOf, toLocalInput, fromLocalInput, changedFields, sameTime,
+            STATUS_LABEL, NexusTaskTimer, showUnpostedPopup, notifyDesktop,
+        },
     };
 })();

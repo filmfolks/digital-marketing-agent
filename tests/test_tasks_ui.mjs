@@ -80,7 +80,6 @@ test('edit sends only changed fields (rescheduling an approved task)', () => {
 test('drag to another day keeps time and offset', () => {
     assert.equal(T.moveToDay('2026-10-20T17:00:00+05:30', '2026-10-13'), '2026-10-13T17:00:00+05:30');
 });
-console.log(`\n${passed} passed, ${failed} failed`);
 test('task card shows the image preview and a Generate/Regenerate image button', () => {
     const none = T.taskCardHtml({ id: 't3', title: 'x', status: 'approved', platforms: ['instagram'], media: [] });
     assert.ok(none.includes('data-act="image"') && none.includes('Generate image') && none.includes('nt-media-missing'));
@@ -95,4 +94,59 @@ test('task card shows the image preview and a Generate/Regenerate image button',
     assert.deepEqual(T.imageEdits({ headline: ' Hi ', keywords: 'a, b,', bg: '', provider: 'card' }),
         { headline: 'Hi', keywords: ['a', 'b'], provider: 'card' });
 });
+
+test('approved status label indicates waiting for posted', () => {
+    assert.equal(T.STATUS_LABEL.approved, 'Approved · waiting for posted');
+    const card = T.taskCardHtml({ id: 't6', title: 'Scheduled post', status: 'approved', platforms: ['x'], scheduled_at: '2026-10-25T10:00:00+05:30' });
+    assert.ok(card.includes('Approved · waiting for posted'));
+});
+
+test('NexusTaskTimer has robust API, signature generator, and storage helpers', () => {
+    const timer = T.NexusTaskTimer;
+    assert.ok(timer && typeof timer.tick === 'function');
+    assert.ok(typeof timer.start === 'function' && typeof timer.stop === 'function');
+    const sig = timer.taskSignature({ id: 'task-1', status: 'failed', error: 'locator timeout', scheduled_at: '2026-10-20T10:00:00+05:30' });
+    assert.equal(sig, 'task-1:failed:locator timeout:2026-10-20T10:00:00+05:30');
+});
+
+test('showUnpostedPopup renders popup modal with reason and action buttons', () => {
+    // Set up a mock DOM document
+    const createdElements = [];
+    globalThis.document = {
+        getElementById: id => (id === 'ntUnpostedPopup' ? null : null),
+        createElement: tag => {
+            const classes = new Set();
+            const el = {
+                tagName: tag,
+                innerHTML: '',
+                className: '',
+                id: '',
+                style: {},
+                classList: {
+                    add: c => classes.add(c),
+                    remove: c => classes.delete(c),
+                    contains: c => classes.has(c)
+                }
+            };
+            createdElements.push(el);
+            return el;
+        },
+        body: { appendChild: el => {} }
+    };
+    T.showUnpostedPopup([
+        { id: 't-fail', title: 'Launch teaser', status: 'failed', platforms: ['x'], error: 'locator timeout', scheduled_at: '2026-10-13T09:00:00+05:30' },
+        { id: 't-overdue', title: 'Daily tip', status: 'approved', platforms: ['instagram'], scheduled_at: '2026-10-13T08:00:00+05:30' }
+    ]);
+    const popup = createdElements.find(e => e.id === 'ntUnpostedPopup');
+    assert.ok(popup, 'popup modal element was created');
+    assert.ok(popup.innerHTML.includes('Unposted / Overdue Tasks'));
+    assert.ok(popup.innerHTML.includes('Launch teaser'));
+    assert.ok(popup.innerHTML.includes('locator timeout'));
+    assert.ok(popup.innerHTML.includes('Post Now / Kickstart'));
+    assert.ok(popup.innerHTML.includes('Reschedule'));
+    assert.ok(popup.innerHTML.includes('Dismiss'));
+    delete globalThis.document;
+});
+
+console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

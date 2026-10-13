@@ -4766,8 +4766,26 @@ function renderActivityHtml(data, mediaUrl) {
     if (!items.length) return 'No activity yet. Entries appear after the first browser check or post.';
     const safeUrl = u => /^https:\/\//.test(u || '') ? u : '#';
     const img = /\.(png|jpe?g|webp|gif)$/i;
+    const isPostCmd = a => a === 'post' || a === 'task_done' || /(_post|^post)/.test(a || '') || /^(canva_to_|generic_post)/.test(a || '');
     return items.map(e => {
-        const [icon, word] = ACTIVITY_STATUS[e.status] || ['•', e.status || '?'];
+        let icon, word;
+        if (e.status === 'failed' || e.action === 'task_failed') {
+            [icon, word] = ['❌', 'Failed'];
+        } else if (e.status === 'blocked') {
+            [icon, word] = ['⛔', 'Blocked'];
+        } else if (e.status === 'dry_run') {
+            [icon, word] = ['🧪', 'Dry run'];
+        } else if (e.action === 'task_approved' || e.task_status === 'approved') {
+            [icon, word] = ['⏳', 'Approved · waiting for posted'];
+        } else if (e.action === 'task_created') {
+            [icon, word] = ['📝', 'Created · waiting for approval'];
+        } else if (e.action === 'task_running') {
+            [icon, word] = ['🚀', 'Posting…'];
+        } else if (isPostCmd(e.action)) {
+            [icon, word] = ['✅', 'Posted'];
+        } else {
+            [icon, word] = ACTIVITY_STATUS[e.status] || ['•', e.status || '?'];
+        }
         const media = (e.media || []).filter(m => img.test(m)).map(m =>
             `<a href="${activityEsc(mediaUrl(m))}" target="_blank" rel="noopener"><img class="activity-thumb" loading="lazy" alt="media" src="${activityEsc(mediaUrl(m))}" style="max-width:96px;max-height:120px;border-radius:6px;"></a>`).join(' ');
         const link = e.permalink ? `<a href="${activityEsc(safeUrl(e.permalink))}" target="_blank" rel="noopener noreferrer">${activityEsc(e.permalink)}</a>` : '';

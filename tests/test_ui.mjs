@@ -525,12 +525,18 @@ await test('Activity page renders the relay activity log (escaped, https-only li
     const out = r({ entries: [
         { ts: '2026-10-12T20:15:04+00:00', platform: 'instagram', action: 'post', status: 'ok', agent: 'social_browser_agent', brain: 'Sho',
           content: 'Hi <script>x</script>', media: ['docs/a.png'], permalink: 'https://www.instagram.com/acmebites/p/DeaEWfDE9S7/' },
-        { ts: 't', platform: 'x', status: 'failed', permalink: 'javascript:alert(1)', error: 'boom' }] }, m => `/m?p=${m}`);
+        { ts: 't', platform: 'x', status: 'failed', permalink: 'javascript:alert(1)', error: 'boom' },
+        { ts: 't2', platform: 'x', action: 'task_approved', status: 'ok', task_status: 'approved' },
+        { ts: 't3', platform: 'x', action: 'task_created', status: 'ok', task_status: 'pending_approval' },
+        { ts: 't4', platform: 'x', action: 'task_running', status: 'ok', task_status: 'running' }] }, m => `/m?p=${m}`);
     assert.ok(out.includes('href="https://www.instagram.com/acmebites/p/DeaEWfDE9S7/"'));
     assert.ok(out.includes('src="/m?p=docs/a.png"'));
     assert.ok(!out.includes('<script>'));
     assert.ok(out.includes('href="#"'));
     assert.ok(out.includes('Posted') && out.includes('Failed') && out.includes('Sho'));
+    assert.ok(out.includes('Approved · waiting for posted'), 'approved task shows waiting for posted');
+    assert.ok(out.includes('Created · waiting for approval'), 'created task shows waiting for approval');
+    assert.ok(out.includes('Posting…'), 'running task shows Posting…');
 });
 
 await test('Brand page shows Saved links from the relay (/links), escaped and https-only', async () => {
