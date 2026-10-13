@@ -398,7 +398,7 @@ class InstagramFlow(unittest.TestCase):
                                  pacer=nopace(), screenshot=lambda t: f"/s/{t}.png")
         self.assertTrue(r["dry_run"])
         self.assertEqual(page.uploads, [self.img])
-        self.assertEqual(page.typed, "Mini burgers 🍔 #acmebites")
+        self.assertEqual(page.typed, "Mini burgers 🍔 #acmebites ")   # trailing space closes the hashtag typeahead
         self.assertEqual(page.clicks.count("role:button:Next"), 2)
         self.assertNotIn("role:button:Share", page.clicks)
         self.assertEqual(r["screenshot"], "/s/dryrun.png")

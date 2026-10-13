@@ -11,6 +11,7 @@ fills the composer, attaches media — and stops right before the final
 
 from __future__ import annotations
 
+import re
 import struct
 import sys
 import time
@@ -112,6 +113,14 @@ def safe_click(page, loc, *, timeout_ms: int = 8000, label: str = "") -> str:
         return "dispatch"
     except Exception as e:                         # noqa: BLE001
         raise FlowError(f"could not click {label or 'element'}: {str(e).splitlines()[0][:200]}") from e
+
+
+def close_typeahead(page, text: str) -> None:
+    """A caption ending in a #hashtag/@mention leaves FB/IG's suggestion list open over Next/Share.
+    A trailing space closes it without picking a suggestion (Enter would, Escape may discard)."""
+    if text and re.search(r"[#@][\w.]+$", text.rstrip("\n")) and not text.endswith((" ", "\n")):
+        page.keyboard.type(" ")
+        page.wait_for_timeout(400)
 
 
 # Dialogs that would throw work away or delete something: never auto-confirmed.
@@ -352,6 +361,7 @@ def instagram_post(page, caption: str, media: list[str], *, dry_run: bool = Fals
         pacer.pause(1.2, 2.4)
     if caption:
         pacer.type_into(page, find_first(page, IG_CAPTION, timeout_ms=10000), caption)
+        close_typeahead(page, caption)
     refuse_destructive_prompt(page)
     share = find_first(page, IG_SHARE, timeout_ms=10000)
 
@@ -493,6 +503,7 @@ def facebook_page_post(page, text: str, media: list[str] | None = None, *, page_
         box = find_first(page, FB_TEXTBOX, timeout_ms=10000)
         box.evaluate("e => e.focus()")        # an invisible layer blocks real clicks on the lexical editor
         page.keyboard.type(text, delay=25)
+        close_typeahead(page, text)
     if media:
         attach_media(page, FB_FILE_INPUT, FB_PHOTO_BUTTON, media)
         pacer.pause(2.5, 4.5)
