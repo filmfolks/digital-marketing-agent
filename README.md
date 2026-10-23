@@ -424,12 +424,35 @@ The **Brand Setup** page (and `agent/brand_research.py`) turns a business name, 
 - **Research:** a polite crawl of the website (robots.txt obeyed including crawl-delay, same domain only, `NEXUS_CRAWL_MAX_PAGES` cap; plain HTTP first, Playwright only for JS-only pages). Google Business Profile data comes from the Places API when `GOOGLE_PLACES_API_KEY` is set, otherwise from the public Maps listing in the browser.
 - **Brand Profile** (`data/brands/<id>/profile.json`): services, USPs, personas, voice (do/don't, avoid-words, emoji policy), content pillars, hashtags, local SEO keywords. It is built by the configured AI provider chain, with a heuristic fallback that is labelled as such.
 - **30-day plan** (`plan.json`): goals/KPIs, channel mix, cadence, a day-by-day calendar and campaigns.
+- **Contact details + signature:** business name, mobile/WhatsApp, contact email, social links and a logo are stored on the brand record (`data/brands/<id>/brand.json`, logo as `logo.png`). `agent/brand_signature.py` turns them into a compact **signature** that is appended to *every published post* (phone, website and social links, trimmed per platform so a 280-char tweet is never cut mid-text; X gets a one-line version). Toggle it off or set a custom block per brand. Logo upload: `POST /brand {"action":"logo"}`; remove with `"action":"logo_remove"`.
 
-Both are editable in the UI and export to Markdown/CSV. The **active brand** (top-bar switcher) is injected into every generation, in the dashboard and in `generate_content.py`, along with its guardrails (avoid-words → `[removed]`, emoji policy). Use `--brand-id` to pick a brand or `--no-brand-profile` to disable it. Relay endpoint: `POST /brand` with `action` = list | create | get | activate | delete | research | profile | plan | save | export.
+Both are editable in the UI and export to Markdown/CSV. The **active brand** (top-bar switcher) is injected into every generation, in the dashboard and in `generate_content.py`, along with its guardrails (avoid-words → `[removed]`, emoji policy). Use `--brand-id` to pick a brand or `--no-brand-profile` to disable it. Relay endpoint: `POST /brand` with `action` = list | create | get | activate | delete | research | profile | plan | save | export | logo | logo_remove.
 
 CLI: `python agent/brand_research.py create --name "Acme" --website https://acme.in --gbp <maps url>`, then `python agent/brand_research.py run --brand acme`.
 
-A future prospecting agent is designed (not built) in [docs/LEAD_GEN_DESIGN.md](docs/LEAD_GEN_DESIGN.md).
+## 🧲 Lead Gen & email outreach
+
+The **Lead Gen** page (and `agent/lead_gen.py`) builds a contactable prospect list from a Google Maps/Places search, then `agent/email_outreach.py` emails them about your services through your own SMTP server.
+
+```bash
+# 1. Find businesses and pull emails/phones from their own websites
+python agent/lead_gen.py scan --query "dental clinics" --location "Pune" \
+    --campaign pune-dentists --limit 20
+python agent/lead_gen.py list --campaign pune-dentists
+python agent/lead_gen.py export --campaign pune-dentists --format csv
+
+# 2. Email them (dry-run by default — add --send to actually send)
+python agent/email_outreach.py preview --campaign pune-dentists
+python agent/email_outreach.py send --campaign pune-dentists --send
+```
+
+- **Discovery:** the Places API (New) when `GOOGLE_PLACES_API_KEY` is set (paginated, recommended); otherwise the public Maps page is read in the browser (best-effort).
+- **Enrichment:** each prospect's own site is crawled politely (robots.txt, same domain, capped pages) for emails/phones, including Cloudflare-obfuscated addresses. Nothing is guessed.
+- **Sending:** safe by default (`send_campaign` only validates unless `send=True`). A suppression list (reply STOP), a daily cap (`NEXUS_EMAIL_DAILY_CAP`) and a minimum delay guard your mailbox; every send is logged to `data/leads/_outreach_log.jsonl`. Configure `NEXUS_SMTP_*` / `NEXUS_EMAIL_*` in `.env` (see `.env.example`).
+- **Storage:** campaigns in `data/leads/<id>.json`, opt-outs in `data/leads/_suppression.json`. Relay endpoint: `GET /leads` (campaigns, email status, suppression) and `POST /leads` with `action` = scan | get | delete | suppress | export | preview | send.
+- **Compliance:** this collects only publicly published business contacts. You are responsible for emailing lawfully (consent rules, opt-out, GDPR/PECR/CAN-SPAM).
+
+The earlier design sketch lives in [docs/LEAD_GEN_DESIGN.md](docs/LEAD_GEN_DESIGN.md).
 
 ## 🔁 API first, browser fallback
 

@@ -50,6 +50,9 @@ if (!chromePath) {
 }
 
 const PORT = Number(process.env.SMOKE_PORT || 8123);
+const WINDOW = process.env.SMOKE_WINDOW || '1440,1000';
+const SUFFIX = process.env.SMOKE_SUFFIX || '';
+const KEYS = process.env.SMOKE_PAGES ? process.env.SMOKE_PAGES.split(',') : ['dashboard', 'brand', 'utm', 'analytics', 'calendar', 'trends'];
 const PROFILE = path.join(ROOT, '.smoke-chrome-profile');
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -113,7 +116,7 @@ function runChrome(extraArgs, { timeoutMs = 60000, ready = null } = {}) {
             '--headless', `--user-data-dir=${PROFILE}`,
             '--no-first-run', '--no-default-browser-check',
             '--disable-gpu', '--disable-background-networking', '--disable-sync',
-            '--mute-audio', '--hide-scrollbars', '--window-size=1440,1000',
+            '--mute-audio', '--hide-scrollbars', `--window-size=${WINDOW}`,
             // Sandboxed/CI hosts (and the DSH file sandbox) cannot create
             // Chrome's crashpad dirs or its own sandbox — keep it simple.
             '--no-sandbox', '--disable-breakpad', '--disable-crash-reporter',
@@ -143,10 +146,159 @@ function runChrome(extraArgs, { timeoutMs = 60000, ready = null } = {}) {
     });
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+   Real-viewport capture over the DevTools protocol.
+
+   Chrome refuses to make a headless window narrower than 500 CSS px on macOS
+   (measured: --window-size=390 renders at 500), which silently crops every
+   "mobile" --screenshot. Driving Emulation.setDeviceMetricsOverride over CDP is
+   the only way to render a true 390 px viewport. Node 22+ ships a WebSocket
+   global, so no dependency is needed.
+   ──────────────────────────────────────────────────────────────────────────── */
+function cdpLaunch() {
+    return new Promise((resolve, reject) => {
+        const profile = PROFILE + '-cdp';
+        const child = spawn(chromePath, [
+            '--headless', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
+            '--no-first-run', '--no-default-browser-check',
+            '--disable-gpu', '--disable-background-networking', '--disable-sync',
+            '--mute-audio', '--hide-scrollbars',
+            '--no-sandbox', '--disable-breakpad', '--disable-crash-reporter',
+            '--disable-dev-shm-usage', `--crash-dumps-dir=${profile}`,
+            'about:blank',
+        ], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let buf = '';
+        let done = false;
+        const timer = setTimeout(() => { if (!done) { done = true; reject(new Error('timed out waiting for the DevTools endpoint')); } }, 20000);
+        const onErr = (chunk) => {
+            buf += chunk;
+            const m = buf.match(/DevTools listening on (ws:\/\/\S+)/);
+            if (m && !done) { done = true; clearTimeout(timer); child.stderr.off('data', onErr); resolve({ child, wsUrl: m[1] }); }
+        };
+        child.stderr.on('data', onErr);
+        child.on('error', (e) => { if (!done) { done = true; clearTimeout(timer); reject(e); } });
+        child.on('exit', (code) => { if (!done && code != null) { done = true; clearTimeout(timer); reject(new Error(`Chrome exited early (${code}): ${buf.slice(0, 300)}`)); } });
+    });
+}
+
+function connectWs(wsUrl) {
+    return new Promise((resolve, reject) => {
+        const ws = new WebSocket(wsUrl);
+        const timer = setTimeout(() => reject(new Error('DevTools WebSocket connect timed out')), 10000);
+        ws.addEventListener('open', () => { clearTimeout(timer); resolve(ws); });
+        ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('DevTools WebSocket error')); });
+    });
+}
+
+class CDP {
+    constructor(ws) {
+        this.ws = ws; this.seq = 0; this.pending = new Map(); this.listeners = [];
+        ws.addEventListener('message', (ev) => {
+            let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+            if (msg.id && this.pending.has(msg.id)) {
+                const p = this.pending.get(msg.id); this.pending.delete(msg.id);
+                msg.error ? p.reject(new Error(msg.error.message)) : p.resolve(msg.result);
+            } else if (msg.method) {
+                for (const l of this.listeners.slice()) l(msg);
+            }
+        });
+    }
+    send(method, params = {}, sessionId) {
+        const id = ++this.seq;
+        return new Promise((resolve, reject) => {
+            this.pending.set(id, { resolve, reject });
+            this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+        });
+    }
+    once(method, sessionId, timeoutMs = 20000) {
+        return new Promise((resolve, reject) => {
+            const t = setTimeout(() => { off(); reject(new Error('timeout waiting for ' + method)); }, timeoutMs);
+            const fn = (msg) => { if (msg.method === method && (!sessionId || msg.sessionId === sessionId)) { clearTimeout(t); off(); resolve(msg.params); } };
+            const off = () => { this.listeners = this.listeners.filter((l) => l !== fn); };
+            this.listeners.push(fn);
+        });
+    }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function cdpEval(cdp, sessionId, expression) {
+    const r = await cdp.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, sessionId);
+    return r && r.result ? r.result.value : undefined;
+}
+
+/** Load index.html directly at the emulated viewport and wait for the app to boot. */
+async function cdpOpen(cdp, base, width, height) {
+    const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
+    const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+    await cdp.send('Page.enable', {}, sessionId);
+    await cdp.send('Runtime.enable', {}, sessionId);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width <= 820 }, sessionId);
+    const loaded = cdp.once('Page.loadEventFired', sessionId).catch(() => {});
+    await cdp.send('Page.navigate', { url: `${base}/index.html` }, sessionId);
+    await loaded;
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+        const ready = await cdpEval(cdp, sessionId, 'typeof switchPage === "function" && !!document.getElementById("page-dashboard")').catch(() => false);
+        if (ready) break;
+        await sleep(200);
+    }
+    await sleep(1600);   // init(), relay probe and persisted state settle
+    return { targetId, sessionId };
+}
+
+async function cdpCapturePage(cdp, base, page, width, height) {
+    const { targetId, sessionId } = await cdpOpen(cdp, base, width, height);
+    try {
+        await cdpEval(cdp, sessionId, `(() => {
+            try {
+                const n = document.getElementById('notifPanel'); if (n) n.classList.remove('open');
+                const t = document.getElementById('toastContainer'); if (t) t.innerHTML = '';
+                switchPage(${JSON.stringify(page)});
+            } catch (e) {}
+            return true;
+        })()`);
+        await sleep(500);
+        const shot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId);
+        return Buffer.from(shot.data, 'base64');
+    } finally {
+        await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
+    }
+}
+
+async function cdpOverflowAudit(cdp, base, width, height) {
+    const { targetId, sessionId } = await cdpOpen(cdp, base, width, height);
+    try {
+        const pages = await cdpEval(cdp, sessionId, '[...document.querySelectorAll(".nav-item")].map(n => n.dataset.page)') || [];
+        const lines = [];
+        let worst = 0;
+        for (const pg of pages) {
+            await cdpEval(cdp, sessionId, `try{switchPage(${JSON.stringify(pg)})}catch(e){}`);
+            await sleep(70);
+            const res = await cdpEval(cdp, sessionId, `(() => {
+                const de = document.documentElement, vw = de.clientWidth, ov = de.scrollWidth - vw;
+                const bad = [...document.querySelectorAll('#page-' + ${JSON.stringify(pg)} + ' *')]
+                    .map(el => ({ el, r: el.getBoundingClientRect() }))
+                    .filter(o => o.r.right > vw + 1)
+                    .slice(0, 5)
+                    .map(o => o.el.tagName.toLowerCase() + (o.el.id ? '#' + o.el.id : '') +
+                        (typeof o.el.className === 'string' && o.el.className.trim() ? '.' + o.el.className.trim().split(/\\s+/).slice(0, 2).join('.') : '') +
+                        '@' + Math.round(o.r.right));
+                return { ov, vw, bad };
+            })()`);
+            if (res) { worst = Math.max(worst, res.ov); lines.push(`${pg}: ov=${res.ov} vw=${res.vw}${res.bad.length ? ' :: ' + res.bad.join(' ') : ''}`); }
+        }
+        return { worst, lines };
+    } finally {
+        await cdp.send('Target.closeTarget', { targetId }).catch(() => {});
+    }
+}
+
 let exitCode = 0;
 const cleanup = () => {
     try { server.close(); } catch {}
     try { rmSync(PROFILE, { recursive: true, force: true }); } catch {}
+    try { rmSync(PROFILE + '-cdp', { recursive: true, force: true }); } catch {}
 };
 process.on('exit', cleanup);
 
@@ -172,29 +324,40 @@ try {
             else { failed++; console.error(`  ✘ ${r.name}${r.detail ? `\n      ${r.detail}` : ''}`); }
         }
 
-        console.log('\n📸 Screenshots');
-        for (const page of ['dashboard', 'brand', 'utm', 'analytics', 'calendar', 'trends']) {
-            const file = path.join(SHOTS, `smoke-${page}.png`);
-            rmSync(file, { force: true });
-            // Wait for the PNG to exist AND stop growing — Chrome writes it in
-            // stages and a partial file makes a corrupt preview.
-            let lastSize = -1, stable = 0;
-            const shot = await runChrome(['--screenshot=' + file, `${url}?page=${page}`], {
-                timeoutMs: 60000,
-                ready: () => {
-                    if (!existsSync(file)) return false;
-                    const size = readFileSync(file).length;
-                    stable = size > 1500 && size === lastSize ? stable + 1 : 0;
-                    lastSize = size;
-                    return stable >= 2;
-                },
-            });
-            if (existsSync(file) && readFileSync(file).length > 1500) {
-                console.log(`  ✔ shots/smoke-${page}.png (${Math.round(readFileSync(file).length / 1024)} KB)`);
+        const base = `http://127.0.0.1:${PORT}`;
+        const [winW, winH] = (process.env.SMOKE_WINDOW || WINDOW).split(',').map(Number);
+        let cdp = null, chromeCdp = null;
+        try {
+            const launched = await cdpLaunch();
+            chromeCdp = launched.child;
+            cdp = new CDP(await connectWs(launched.wsUrl));
+
+            if (process.env.SMOKE_PROBE) {
+                const audit = await cdpOverflowAudit(cdp, base, winW, winH);
+                console.log(`\n📐 Overflow audit @ ${winW}x${winH}`);
+                for (const line of audit.lines) console.log('   ' + line);
+                if (audit.worst > 1) { console.error(`   ✘ horizontal overflow up to ${audit.worst}px`); failed++; }
+                else console.log('   ✔ no horizontal overflow on any page');
             } else {
-                console.error(`  ✘ ${page} screenshot failed${shot.timedOut ? ' (timeout)' : ''}`);
-                failed++;
+                console.log(`\n📸 Screenshots @ ${winW}x${winH}`);
+                for (const page of KEYS) {
+                    const file = path.join(SHOTS, `smoke-${page}${SUFFIX}.png`);
+                    rmSync(file, { force: true });
+                    try {
+                        const png = await cdpCapturePage(cdp, base, page, winW, winH);
+                        if (png && png.length > 1500) {
+                            writeFileSync(file, png);
+                            console.log(`  ✔ shots/smoke-${page}${SUFFIX}.png (${Math.round(png.length / 1024)} KB)`);
+                        } else { throw new Error('empty capture'); }
+                    } catch (e) { console.error(`  ✘ ${page} screenshot failed: ${e.message}`); failed++; }
+                }
             }
+        } catch (e) {
+            console.error(`  ✘ CDP capture unavailable: ${e.message}`);
+            failed++;
+        } finally {
+            try { cdp && cdp.ws.close(); } catch {}
+            try { chromeCdp && chromeCdp.kill('SIGKILL'); } catch {}
         }
 
         console.log(`\n${passed} passed, ${failed} failed\n`);

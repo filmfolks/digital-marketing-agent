@@ -297,11 +297,15 @@ class BrandEndpoint(RelayServerCase):
 
     @classmethod
     def setUpClass(cls):
+        import os
         super().setUpClass()
         cls.br = relay.brand_module()
         cls._bdir = tempfile.TemporaryDirectory()
         cls._saved = (cls.br.BRANDS_DIR, cls.br.run_research, cls.br.default_llm)
+        cls._saved_env = os.environ.get("NEXUS_BRANDS_DIR")
         cls.br.BRANDS_DIR = Path(cls._bdir.name)
+        # brand_signature (logo/signature) resolves the folder from the env.
+        os.environ["NEXUS_BRANDS_DIR"] = cls._bdir.name
 
         def fake_research(store, bid, **kw):
             r = {"brand_id": bid, "site_summary": {"service_candidates": ["Teeth whitening"],
@@ -313,7 +317,12 @@ class BrandEndpoint(RelayServerCase):
 
     @classmethod
     def tearDownClass(cls):
+        import os
         cls.br.BRANDS_DIR, cls.br.run_research, cls.br.default_llm = cls._saved
+        if cls._saved_env is None:
+            os.environ.pop("NEXUS_BRANDS_DIR", None)
+        else:
+            os.environ["NEXUS_BRANDS_DIR"] = cls._saved_env
         cls._bdir.cleanup()
         super().tearDownClass()
 
@@ -356,6 +365,111 @@ class BrandEndpoint(RelayServerCase):
         code, body = self.brand(action="get", brand_id="../../etc")
         self.assertEqual(code, 400)
         code, body = self.brand(action="nope", brand_id="brand-one")
+        self.assertEqual(code, 400)
+
+    def test_create_persists_contacts(self):
+        code, body = self.brand(action="create", brand={"business_name": "Acme", "mobile": "+91 98765 43210",
+                                                        "email": "hello@acme.in", "social_links": {"instagram": "@acme"}})
+        self.assertEqual(code, 200, body)
+        b = body["brand"]
+        self.assertEqual(b["mobile"], "+91 98765 43210")
+        self.assertEqual(b["email"], "hello@acme.in")
+        self.assertEqual(b["social_links"], {"instagram": "https://www.instagram.com/acme/"})
+        code, body = self.brand(action="get", brand_id=b["id"])
+        self.assertEqual(body["brand"]["mobile"], "+91 98765 43210")
+
+    def test_logo_upload_and_remove(self):
+        import base64
+        code, body = self.brand(action="create", brand={"business_name": "Logo Co"})
+        bid = body["brand"]["id"]
+        png = "data:image/png;base64," + base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32).decode()
+        code, body = self.brand(action="logo", brand_id=bid, data_url=png)
+        self.assertEqual(code, 200, body)
+        self.assertTrue(body["brand"]["logo"])
+        self.assertTrue(Path(body["logo"]).is_file())
+        code, body = self.brand(action="logo", brand_id=bid, data_url="data:text/plain;base64,aGk=")
+        self.assertEqual(code, 400)
+        code, body = self.brand(action="logo_remove", brand_id=bid)
+        self.assertEqual(code, 200, body)
+        self.assertEqual(body["brand"]["logo"], "")
+
+
+class LeadsEndpoint(RelayServerCase):
+    """/leads over HTTP, with discovery mocked inside the relay process."""
+
+    @classmethod
+    def setUpClass(cls):
+        import os
+        super().setUpClass()
+        import lead_gen
+        cls.lg = lead_gen
+        cls._ldir = tempfile.TemporaryDirectory()
+        cls._saved_env = (os.environ.get("NEXUS_LEADS_DIR"), os.environ.get("GOOGLE_PLACES_API_KEY"))
+        os.environ["NEXUS_LEADS_DIR"] = cls._ldir.name
+        os.environ["GOOGLE_PLACES_API_KEY"] = "test-key"
+        cls._saved_search = lead_gen.places_search
+
+        def fake_search(query, key, *, limit=20, post=None, sleep=None):
+            return {"ok": True, "source": "places_api", "error": "", "leads": [
+                lead_gen.normalise_contact({"name": "Acme Dental", "website": "", "phone": "+91 20 1",
+                                            "emails": ["info@acme.example"], "category": "Dentist"})]}
+        lead_gen.places_search = fake_search
+
+    @classmethod
+    def tearDownClass(cls):
+        import os
+        cls.lg.places_search = cls._saved_search
+        ldir, key = cls._saved_env
+        for name, val in (("NEXUS_LEADS_DIR", ldir), ("GOOGLE_PLACES_API_KEY", key)):
+            if val is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = val
+        cls._ldir.cleanup()
+        super().tearDownClass()
+
+    def leads(self, **body):
+        return self.request("POST", "/leads", body=body, token=TOKEN)
+
+    def test_leads_requires_token(self):
+        code, _ = self.request("GET", "/leads")
+        self.assertEqual(code, 401)
+
+    def test_get_reports_state(self):
+        code, body = self.request("GET", "/leads", token=TOKEN)
+        self.assertEqual(code, 200, body)
+        self.assertIn("campaigns", body)
+        self.assertIn("email", body)
+        self.assertTrue(body["places_key"])
+
+    def test_scan_enrich_suppress_export_delete(self):
+        code, body = self.leads(action="scan", query="dental clinics", location="Pune",
+                                campaign="pune-dentists", enrich=False)
+        self.assertEqual(code, 200, body)
+        self.assertEqual(body["found"], 1)
+        self.assertEqual(body["stats"]["with_email"], 1)
+
+        code, body = self.request("GET", "/leads?campaign=pune-dentists", token=TOKEN)
+        self.assertEqual(body["campaign"], "pune-dentists")
+        self.assertEqual(len(body["leads"]), 1)
+
+        code, body = self.leads(action="suppress", email="info@acme.example")
+        self.assertTrue(body["ok"])
+        code, body = self.request("GET", "/leads", token=TOKEN)
+        self.assertIn("info@acme.example", body["suppression"])
+
+        code, body = self.leads(action="preview", campaign="pune-dentists")
+        self.assertTrue(body["dry_run"])
+        self.assertEqual(len(body["previews"]), 0, "suppressed lead must not be previewed")
+
+        code, body = self.leads(action="export", campaign="pune-dentists", format="csv")
+        self.assertTrue(body["content"].startswith("name,category,email"))
+
+        code, body = self.leads(action="delete", campaign="pune-dentists")
+        self.assertTrue(body["ok"])
+
+    def test_unknown_action_is_400(self):
+        code, _ = self.leads(action="nope")
         self.assertEqual(code, 400)
 
 

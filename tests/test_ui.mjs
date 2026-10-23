@@ -558,6 +558,25 @@ await test('Brand page shows Saved links from the relay (/links), escaped and ht
     assert.match(r({}), /No saved links yet/);
 });
 
+await test('Lead Gen page, nav item and every referenced id/handler exist', async () => {
+    const fs = await import('node:fs');
+    const js = fs.readFileSync(path.join(uiDir, 'script.js'), 'utf8');
+    const html = fs.readFileSync(path.join(uiDir, 'index.html'), 'utf8');
+    assert.match(html, /data-page="leads"/);
+    assert.match(html, /id="page-leads"/);
+    assert.match(html, /id="leadTableBody"/);
+    assert.match(html, /id="leadScanBtn"/);
+    assert.match(js, /PAGE_TITLES\.leads = 'Lead Gen'/);
+    assert.match(js, /if \(pageId === 'leads'\) initLeadsPage\(\)/);
+    const leadJs = js.slice(js.indexOf('LEAD GEN —'));
+    const ids = [...leadJs.matchAll(/['#](lead[A-Z]\w*)['\s]/g)].map(m => m[1]);
+    assert.ok(ids.length > 8);
+    for (const id of new Set(ids)) assert.ok(html.includes(`id="${id}"`), `missing #${id}`);
+    for (const fn of [...html.matchAll(/on(?:click|change)="(lead\w+)\(/g)].map(m => m[1]))
+        assert.match(js, new RegExp(`(?:async )?function ${fn}\\(`), `missing handler ${fn}`);
+    assert.match(js, /relayCall\('\/leads', \{ method: 'GET'/);
+});
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

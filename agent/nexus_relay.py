@@ -67,6 +67,7 @@ SOCIAL = AGENT_DIR / "social_browser_agent.py"
 LOGS = ROOT / "logs"
 sys.path.insert(0, str(ROOT / "agent"))
 import client_config  # noqa: E402
+import brand_signature  # noqa: E402
 import brain_bridge  # noqa: E402
 import antigravity_bridge  # noqa: E402
 import nexus_scheduler  # noqa: E402
@@ -211,6 +212,10 @@ class Handler(TaskRoutesMixin, BaseHTTPRequestHandler):
                 return self._error(401, "Invalid or missing X-Nexus-Token")
             import link_memory
             return self._reply(200, link_memory.view())
+        if path == "/leads":
+            if not self._token_ok():
+                return self._error(401, "Invalid or missing X-Nexus-Token")
+            return self._leads_get()
         if path == "/client":
             # Unauthenticated like /health: names the client so the UI can brand itself.
             return self._reply(200, {"ok": True, **client_config.public_view()})
@@ -224,7 +229,7 @@ class Handler(TaskRoutesMixin, BaseHTTPRequestHandler):
         if path == "/tools":
             if not self._token_ok():
                 return self._error(401, "Invalid or missing X-Nexus-Token")
-            return self._reply(200, {"ok": True, "endpoints": list(CMD_MAP) + ["activity", "publish", "publish-due", "mcp", "queue", "health", "brand", "social", "brain", "antigravity", "nexus/chat", "tasks", "calendar", "calendar.ics", "scheduler"]})
+            return self._reply(200, {"ok": True, "endpoints": list(CMD_MAP) + ["activity", "publish", "publish-due", "mcp", "queue", "health", "brand", "social", "leads", "brain", "antigravity", "nexus/chat", "tasks", "calendar", "calendar.ics", "scheduler"]})
         if path == "/" or path == "/app":
             self.send_response(302)
             self.send_header("Location", "/app/")
@@ -294,6 +299,8 @@ class Handler(TaskRoutesMixin, BaseHTTPRequestHandler):
             return self._mcp(body)
         if path == "/social":
             return self._social(body)
+        if path == "/leads":
+            return self._leads_post(body)
         if path == "/brand":
             return self._brand(body)
         if path.startswith("/brain/"):
@@ -473,17 +480,25 @@ class Handler(TaskRoutesMixin, BaseHTTPRequestHandler):
         if body.get("headed"):
             args.append("--headed")
 
+        def sign(text, platform, long_post=False):
+            """Every direct browser post carries the brand's contact signature."""
+            try:
+                return brand_signature.apply_signature(str(text), platform,
+                                                       max_len=0 if (platform in ("x", "twitter") and long_post) else None)
+            except Exception:                                # noqa: BLE001 — signature is best-effort
+                return str(text)
+
         args.append(workflow)
         if workflow == "instagram_post":
             if not body.get("caption"):
                 return self._error(400, "caption is required")
-            args.extend(["--caption", str(body["caption"])])
+            args.extend(["--caption", sign(body["caption"], "instagram")])
             if body.get("image"):
                 args.extend(["--image", str(body["image"])])
         elif workflow == "facebook_post":
             if not body.get("message"):
                 return self._error(400, "message is required")
-            args.extend(["--message", str(body["message"])])
+            args.extend(["--message", sign(body["message"], "facebook")])
             if body.get("page_url"):
                 args.extend(["--page-url", str(body["page_url"])])
             if body.get("image"):
@@ -491,7 +506,7 @@ class Handler(TaskRoutesMixin, BaseHTTPRequestHandler):
         elif workflow == "blogger_post":
             if not body.get("title") or not body.get("body"):
                 return self._error(400, "title and body are required")
-            args.extend(["--title", str(body["title"]), "--body", str(body["body"])])
+            args.extend(["--title", str(body["title"]), "--body", sign(body["body"], "blogger")])
             if body.get("labels"):
                 args.extend(["--labels", str(body["labels"])])
             if body.get("blog_url"):
@@ -506,11 +521,11 @@ class Handler(TaskRoutesMixin, BaseHTTPRequestHandler):
         elif workflow == "canva_to_instagram":
             if not body.get("design_url") or not body.get("caption"):
                 return self._error(400, "design_url and caption are required")
-            args.extend(["--design-url", str(body["design_url"]), "--caption", str(body["caption"])])
+            args.extend(["--design-url", str(body["design_url"]), "--caption", sign(body["caption"], "instagram")])
         elif workflow == "generic_post":
             if not body.get("url") or not body.get("text"):
                 return self._error(400, "url and text are required")
-            args.extend(["--url", str(body["url"]), "--text", str(body["text"])])
+            args.extend(["--url", str(body["url"]), "--text", sign(body["text"], "")])
             if body.get("selector"):
                 args.extend(["--selector", str(body["selector"])])
             if body.get("submit"):
@@ -518,7 +533,7 @@ class Handler(TaskRoutesMixin, BaseHTTPRequestHandler):
         elif workflow == "x_post":
             if not body.get("text"):
                 return self._error(400, "text is required")
-            args.extend(["--text", str(body["text"])])
+            args.extend(["--text", sign(body["text"], "x", bool(body.get("long_post")))])
             for m in (body.get("media") or [])[:4]:
                 args.extend(["--media", str(m)])
             if body.get("long_post"):
@@ -534,7 +549,8 @@ class Handler(TaskRoutesMixin, BaseHTTPRequestHandler):
         elif workflow == "canva_to_x":
             if not body.get("design_url") or not body.get("text"):
                 return self._error(400, "design_url and text are required")
-            args.extend(["--design-url", str(body["design_url"]), "--text", str(body["text"])])
+            args.extend(["--design-url", str(body["design_url"]),
+                         "--text", sign(body["text"], "x", bool(body.get("long_post")))])
             if body.get("long_post"):
                 args.append("--long-post")
             if body.get("dry_run"):
@@ -567,7 +583,8 @@ class Handler(TaskRoutesMixin, BaseHTTPRequestHandler):
         action = body.get("action", "list")
         self._activity_status = None
         self._brand_inner(body)
-        if action in ("create", "research", "profile", "plan", "save", "delete", "activate", "export"):
+        if action in ("create", "research", "profile", "plan", "save", "delete", "activate", "export",
+                      "logo", "logo_remove"):
             code = getattr(self, "_activity_status", None) or 0
             try:
                 import activity_log
@@ -612,6 +629,20 @@ class Handler(TaskRoutesMixin, BaseHTTPRequestHandler):
             if action == "activate":
                 store.set_active(bid)
                 return self._reply(200, {"ok": True, "active": bid})
+            if action in ("logo", "logo_remove"):
+                if action == "logo_remove" or body.get("remove"):
+                    brand_signature.remove_logo(bid)
+                    brand = store.patch(bid, {"logo": ""})
+                    return self._reply(200, {"ok": True, "brand_id": bid, "brand": brand, "logo": ""})
+                data_url = body.get("data_url") or body.get("logo")
+                if not data_url:
+                    return self._error(400, "data_url is required")
+                res = brand_signature.save_logo(bid, str(data_url))
+                if not res.get("ok"):
+                    return self._error(400, res.get("error") or "logo upload failed")
+                brand = store.patch(bid, {"logo": res["logo"]})
+                return self._reply(200, {"ok": True, "brand_id": bid, "brand": brand,
+                                         "logo": res["logo"], "bytes": res.get("bytes")})
             if action == "delete":
                 store.delete(bid)
                 return self._reply(200, {"ok": True, "active": store.active(), "brands": store.list()})
@@ -641,6 +672,87 @@ class Handler(TaskRoutesMixin, BaseHTTPRequestHandler):
                 return self._reply(200, {"ok": True, "filename": f"{bid}-brand-plan.md", "mime": "text/markdown",
                                          "content": br.to_markdown(b["profile"], b["plan"])})
             return self._error(400, f"unknown brand action: {action}")
+        except ValueError as e:
+            return self._error(400, str(e))
+
+    # ── Google Business lead scraping + email outreach ──────────────────────
+    def _leads_get(self):
+        """GET /leads            → campaigns + email status + suppression
+        GET /leads?campaign=x  → one campaign with its leads."""
+        import lead_gen
+        import email_outreach
+        q = urllib.parse.parse_qs(self.path.partition("?")[2])
+        cid = (q.get("campaign") or [""])[0]
+        if cid:
+            camp = lead_gen.load_campaign(cid)
+            return self._reply(200, {"ok": True, "campaign": camp["id"], "query": camp.get("query", ""),
+                                     "location": camp.get("location", ""),
+                                     "stats": lead_gen.campaign_stats(camp), "leads": camp["leads"]})
+        return self._reply(200, {"ok": True, "campaigns": lead_gen.list_campaigns(),
+                                 "email": email_outreach.status(),
+                                 "suppression": sorted(lead_gen.load_suppression()),
+                                 "places_key": bool(os.environ.get("GOOGLE_PLACES_API_KEY"))})
+
+    def _log_activity(self, action: str, status: str, content: str, error=None) -> None:
+        try:
+            import activity_log
+            activity_log.record(agent="nexus_relay", action=action, platform="email", status=status,
+                                content=content[:500], error=error, source="relay:/leads")
+        except Exception:                                # noqa: BLE001
+            pass
+
+    def _leads_post(self, body: dict):
+        import lead_gen
+        import email_outreach
+        action = body.get("action", "campaigns")
+        try:
+            if action == "campaigns":
+                return self._reply(200, {"ok": True, "campaigns": lead_gen.list_campaigns(),
+                                         "email": email_outreach.status()})
+            if action == "scan":
+                out = lead_gen.scan(body.get("query") or "", body.get("location") or "",
+                                    campaign=body.get("campaign") or None,
+                                    limit=int(body.get("limit") or lead_gen.DEFAULT_LIMIT),
+                                    enrich=body.get("enrich", True),
+                                    render=lead_gen.br.playwright_render if body.get("render", True) else None,
+                                    delay=float(body.get("delay") or 1.0))
+                stats = out.pop("campaign_data", {}).get("leads")
+                out["leads"] = stats or []
+                self._log_activity("lead_scan", "ok",
+                                   f"Lead scan '{body.get('query')}' → {out.get('found')} found ({out.get('source')})")
+                return self._reply(200, out)
+            if action == "get":
+                camp = lead_gen.load_campaign(body.get("campaign") or "")
+                return self._reply(200, {"ok": True, "campaign": camp["id"], "query": camp.get("query", ""),
+                                         "location": camp.get("location", ""),
+                                         "stats": lead_gen.campaign_stats(camp), "leads": camp["leads"]})
+            if action == "delete":
+                return self._reply(200, {"ok": lead_gen.delete_campaign(body.get("campaign") or "")})
+            if action == "suppress":
+                out = lead_gen.suppress(body.get("email") or "", str(body.get("reason") or "")[:200])
+                self._log_activity("lead_suppress", "ok" if out.get("ok") else "failed",
+                                   f"Suppressed {out.get('email')}")
+                return self._reply(200, out)
+            if action == "export":
+                camp = lead_gen.load_campaign(body.get("campaign") or "")
+                if (body.get("format") or "csv") == "json":
+                    return self._reply(200, {"ok": True, "filename": f"{camp['id']}-leads.json",
+                                             "mime": "application/json",
+                                             "content": json.dumps(camp, indent=2, ensure_ascii=False)})
+                return self._reply(200, {"ok": True, "filename": f"{camp['id']}-leads.csv", "mime": "text/csv",
+                                         "content": lead_gen.export_csv(camp, only_with_email=bool(body.get("only_email")))})
+            if action in ("send", "preview"):
+                send = bool(body.get("send")) and action == "send"
+                out = email_outreach.send_campaign(
+                    body.get("campaign") or "", subject=body.get("subject") or "",
+                    body=body.get("body") or "", brand_id=body.get("brand_id") or None, send=send,
+                    limit=int(body.get("limit") or 0), only_with_email=bool(body.get("only_email", True)))
+                self._log_activity("lead_email", "ok" if out.get("ok") else "failed",
+                                   f"Outreach {out.get('campaign')}: sent {out.get('sent_count')} "
+                                   f"(dry_run={out.get('dry_run')})",
+                                   error=None if out.get("ok") else out.get("error"))
+                return self._reply(200, out)
+            return self._error(400, f"unknown leads action: {action}")
         except ValueError as e:
             return self._error(400, str(e))
 

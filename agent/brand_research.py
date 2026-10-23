@@ -146,9 +146,26 @@ class BrandStore:
             "created_at": existing.get("created_at") or now_iso(),
             "updated_at": now_iso(),
         }
+        # Public contact details (mobile / WhatsApp / email / logo / social links /
+        # signature) are stored on the same record so every post can carry them.
+        try:
+            import brand_signature as bs
+            brand.update(bs.normalise_contacts(inputs, existing))
+        except Exception as e:                                    # noqa: BLE001 — contacts are optional
+            print(f"[brand] contact fields ignored: {e}")
         self.write(bid, "brand", brand)
         if not self.active():
             self.set_active(bid)
+        return brand
+
+    def patch(self, brand_id: str, fields: dict) -> dict:
+        """Merge fields into an existing brand record (used by the logo upload)."""
+        brand = self.read(brand_id, "brand")
+        if not brand:
+            raise ValueError(f"unknown brand {brand_id}")
+        brand.update(fields or {})
+        brand["updated_at"] = now_iso()
+        self.write(brand_id, "brand", brand)
         return brand
 
     def list(self) -> list:

@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## Unreleased: brand signature + Google Business lead gen
+
+### Added
+- `agent/brand_signature.py`: brand contact details (mobile/WhatsApp, email, social links, logo)
+  normalised on the brand record, and a per-platform **post signature** appended to every
+  published post (X gets a one-line, 280-char-safe version). Idempotent; a broken brand record
+  never blocks a post.
+- Brand Setup page: mobile, WhatsApp, contact email, explicit social links, logo upload/preview/
+  remove and a live signature preview + on/off toggle. New relay `POST /brand` actions `logo`
+  and `logo_remove`; contact fields are persisted by `BrandStore.create`.
+- `agent/lead_gen.py`: Google Business lead scraping — Places API (New) Text Search pagination
+  with a public-Maps browser fallback, website enrichment for emails/phones, campaign store
+  (`data/leads/`), suppression list and CSV/JSON export (formula-injection neutralised).
+- `agent/email_outreach.py`: SMTP outreach to scraped leads. Dry-run by default; suppression
+  list, rolling-24h daily cap, minimum delay, opt-out footer and per-send log
+  (`data/leads/_outreach_log.jsonl`).
+- Relay `GET /leads` and `POST /leads` (scan | get | delete | suppress | export | preview | send).
+- Lead Gen dashboard page (`ui/index.html`, `ui/script.js`) with scan, campaign/lead table,
+  email preview/send and suppression management.
+- Tests: `tests/test_brand_signature.py`, `tests/test_lead_gen.py`, `tests/test_email_outreach.py`,
+  plus relay `/leads` + brand-contact/logo coverage and a Lead Gen UI integrity check.
+
+### Changed
+- `agent/publish.py`: `signed_text()` appends the active brand's signature in `publish_job`
+  (covers `/publish`, the scheduler and approved tasks); `long_post`/`NEXUS_X_LONG_POST` lifts
+  the 280-char trim.
+- UI: responsive, publishing-ready visual refresh — a `NEXUS UI v4` layer in `ui/style.css`
+  (fluid type/spacing, dark-styled form controls with the Chrome autofill fix, auto-fit grids,
+  scrollable sticky-header tables, forms and top bar that collapse cleanly on phones) plus
+  layout utility classes replacing ad-hoc inline styles in `ui/index.html`. No horizontal
+  overflow at 390 / 768 / 1440 px (audited).
+- `scripts/smoke_ui.mjs`: screenshots now go through the DevTools protocol
+  (`Emulation.setDeviceMetricsOverride`) instead of `--screenshot`, because Chrome clamps a
+  headless window to a 500 px minimum and silently cropped every "mobile" capture. Adds
+  `SMOKE_PROBE=1` for a per-page horizontal-overflow audit.
+
 ## Unreleased: images never missing + Mac autostart
 - `agent/nexus_media.py`: media resolver at task creation, approval and right before posting. Provider chain `NEXUS_IMAGE_PROVIDERS` (OpenAI, Gemini Imagen, xAI, Canva autofill, Pexels/Unsplash/Pixabay/Openverse CC0, offline Pillow brand card). Per-platform sizes, `media_variants`, `media_source`, `image_brief`.
 - Scheduler renders the offline card if media is still missing for Instagram/Facebook/LinkedIn, then posts. The no-double-post guarantees are unchanged. `publish.py` takes `media_by_platform`.

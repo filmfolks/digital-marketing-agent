@@ -397,11 +397,27 @@ def enqueue(job: dict) -> dict:
     return job
 
 
+def signed_text(text: str, platform: str, *, long_post: bool = False) -> str:
+    """Append the active brand's contact signature so every post is reachable.
+
+    Never fatal: if the brand module is missing or the record is broken the
+    original text is published unchanged.
+    """
+    try:
+        import brand_signature
+        max_len = 0 if (platform in ("x", "twitter") and long_post) else None
+        return brand_signature.apply_signature(text, platform, max_len=max_len)
+    except Exception as e:                                     # noqa: BLE001
+        print(f"[publish] signature skipped for {platform}: {e}")
+        return text
+
+
 def publish_job(job: dict, dry_run: bool = False) -> dict:
     platforms = job.get("platforms") or [job.get("platform")]
     text = job.get("content") or job.get("text") or ""
     media = job.get("media") or ""
     c = creds_from(job)
+    long_post = bool(job.get("long_post")) or env_flag("NEXUS_X_LONG_POST", False)
     results = []
     for platform in platforms:
         if not platform:
@@ -411,11 +427,13 @@ def publish_job(job: dict, dry_run: bool = False) -> dict:
             results.append({"platform": platform, "ok": False, "error": "Unsupported platform"})
             continue
         if dry_run:
-            results.append({"platform": platform, "ok": True, "dry_run": True})
+            results.append({"platform": platform, "ok": True, "dry_run": True,
+                            "signed": signed_text(text, platform, long_post=long_post) != text})
             continue
+        ptext = signed_text(text, platform, long_post=long_post)
         pmedia = (job.get("media_by_platform") or {}).get(platform) or media
         res = publish_with_fallback(
-            platform, text, c, pmedia,
+            platform, ptext, c, pmedia,
             fallback=job.get("fallback", env_flag("NEXUS_BROWSER_FALLBACK", True)),
             browser_dry_run=bool(job.get("browser_dry_run")))
         res = {k: v for k, v in res.items() if v is not None}

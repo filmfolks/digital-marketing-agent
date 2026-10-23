@@ -1,7 +1,14 @@
-# Lead-Gen Prospecting Agent — Design (not implemented)
+# Lead-Gen Prospecting Agent — Design
 
-Status: **design only**. Nothing in this repo prospects, collects contacts, or sends outreach yet.
-This document describes how a future agent would find businesses that match a brand's
+> **Status: a v1 is now shipped.** `agent/lead_gen.py` (discovery via Places API / Maps
+> fallback, website enrichment, campaign store, suppression, CSV/JSON export) and
+> `agent/email_outreach.py` (SMTP sending, dry-run by default, daily cap, opt-out footer,
+> send log) cover the core of §§1–4, 6 and a simplified §7, exposed through the **Lead Gen**
+> dashboard page and the relay `/leads` route. The richer items below — ICP scoring,
+> per-jurisdiction compliance gate with a lawful-basis field, provenance columns, retention
+> and the hashed suppression matrix — remain **design only** and are the roadmap.
+
+This document describes how the full agent would find businesses that match a brand's
 Ideal Customer Profile (ICP) and record their **publicly listed business** contact details,
 with the source of every field, while staying compliant with India's DPDP Act 2023,
 the US CAN-SPAM Act and the EU/UK GDPR.

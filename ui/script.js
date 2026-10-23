@@ -245,6 +245,7 @@ function switchPage(pageId) {
     if (pageId === 'browser') initBrowserPage();
     if (pageId === 'utm') applyUtmPreset();
     if (pageId === 'brand') initBrandPage();
+    if (pageId === 'leads') initLeadsPage();
     window.NexusTasksUI?.onPage(pageId);   // ui/nexus-tasks.js: chat, taskcal, tasks
 }
 
@@ -4578,7 +4579,67 @@ async function switchBrand(id) {
 function brandFormValues() {
     const v = id => (document.getElementById(id)?.value || '').trim();
     return { business_name: v('brandFormName'), website: v('brandFormWebsite'), gbp_url: v('brandFormGbp'),
-             handles: parseHandles(v('brandFormHandles')), location: v('brandFormLocation'), target_market: v('brandFormMarket') };
+             handles: parseHandles(v('brandFormHandles')), location: v('brandFormLocation'), target_market: v('brandFormMarket'),
+             mobile: v('brandFormMobile'), whatsapp: v('brandFormWhatsapp'), email: v('brandFormEmail'),
+             social_links: parseHandles(v('brandFormSocial')),
+             signature: { enabled: !!document.getElementById('brandFormSignature')?.checked } };
+}
+
+/** Upload the chosen logo file as a data URL to POST /brand {action:'logo'}. */
+async function brandUploadLogo(input) {
+    const file = input?.files?.[0];
+    if (!file) return;
+    if (file.size > 2_000_000) { showToast('Logo must be under 2 MB', 'error'); input.value = ''; return; }
+    if (!BrandUI.active) { showToast('Save the brand first, then add a logo', 'error'); input.value = ''; return; }
+    const dataUrl = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(file);
+    }).catch(() => null);
+    if (!dataUrl) { showToast('Could not read that file', 'error'); return; }
+    try {
+        const res = await brandApi({ action: 'logo', brand_id: BrandUI.active, data_url: dataUrl }, 30000);
+        if (BrandUI.bundle) BrandUI.bundle.brand = res.brand;
+        showToast('Logo saved — it appears on every generated card', 'success');
+        renderBrandPage();
+    } catch (e) { showToast(`Logo upload failed: ${e.message}`, 'error'); }
+}
+
+async function brandRemoveLogo() {
+    if (!BrandUI.active) return;
+    try {
+        const res = await brandApi({ action: 'logo_remove', brand_id: BrandUI.active }, 15000);
+        if (BrandUI.bundle) BrandUI.bundle.brand = res.brand;
+        showToast('Logo removed', 'info');
+        renderBrandPage();
+    } catch (e) { showToast(`Could not remove logo: ${e.message}`, 'error'); }
+}
+
+/** Client-side mirror of agent/brand_signature.py for the live preview only —
+ *  the server is authoritative and injects the real signature at publish time. */
+function renderSignaturePreview(brand) {
+    const el = document.getElementById('brandSignaturePreview');
+    if (!el) return;
+    el.style.whiteSpace = 'pre-line';
+    if (brand.signature && brand.signature.enabled === false) {
+        el.textContent = 'Signature is OFF — posts will not include your contact details.';
+        return;
+    }
+    const short = u => String(u || '').replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
+    const lines = [];
+    if (brand.business_name) lines.push(brand.business_name);
+    const phone = brand.mobile || brand.whatsapp;
+    if (phone) lines.push('📞 ' + phone);
+    if (brand.email) lines.push(brand.email);
+    if (brand.website) lines.push('🌐 ' + short(brand.website));
+    const lbl = { instagram: 'IG', facebook: 'FB', x: 'X', twitter: 'X', linkedin: 'in', youtube: 'YT', tiktok: 'TikTok' };
+    const socials = Object.entries(brand.social_links || {}).map(([k, v]) => {
+        const url = typeof v === 'string' ? v : (v.profile || v.url || v.page || '');
+        return `${lbl[k] || k} ${short(url)}`;
+    }).filter(x => x.trim().split(' ')[1]);
+    if (socials.length) lines.push(socials.join(' · '));
+    el.textContent = lines.length
+        ? 'Post signature (added to every published post):\n' + lines.join('\n')
+        : 'Add a phone, website or social links to build the signature.';
 }
 
 async function brandCreate() {
@@ -4705,6 +4766,23 @@ function renderBrandPage() {
     fill('brandFormName', brand.business_name); fill('brandFormWebsite', brand.website); fill('brandFormGbp', brand.gbp_url);
     fill('brandFormHandles', Object.entries(brand.handles || {}).map(([k, v]) => `${k}=@${v}`).join(', '));
     fill('brandFormLocation', brand.location); fill('brandFormMarket', brand.target_market);
+    fill('brandFormMobile', brand.mobile); fill('brandFormWhatsapp', brand.whatsapp); fill('brandFormEmail', brand.email);
+    const socialText = Object.entries(brand.social_links || {}).map(([k, v]) => `${k}=${typeof v === 'string' ? v : (v.profile || v.url || v.page || '')}`).join(', ');
+    fill('brandFormSocial', socialText);
+    const sigToggle = document.getElementById('brandFormSignature');
+    if (sigToggle) sigToggle.checked = !(brand.signature && brand.signature.enabled === false);
+    // Logo preview (served by the relay from data/…; <img> carries the token as a query).
+    const logoImg = document.getElementById('brandLogoPreview');
+    if (logoImg) {
+        if (brand.logo && /^data:/.test(brand.logo)) { logoImg.src = brand.logo; logoImg.style.display = 'inline-block'; }
+        else if (brand.logo) {
+            // The relay serves files under data/ via /activity/media (absolute path is allowed).
+            const tok = relayToken();
+            logoImg.src = `${relayUrl()}/activity/media?path=${encodeURIComponent(brand.logo)}${tok ? `&token=${encodeURIComponent(tok)}` : ''}`;
+            logoImg.style.display = 'inline-block';
+        } else { logoImg.removeAttribute('src'); logoImg.style.display = 'none'; }
+    }
+    renderSignaturePreview(brand);
     applyClientLock();
     const r = b?.research;
     set('brandResearchSummary', r ? `Research: ${(r.pages || []).length} page(s) crawled${r.crawl?.error ? ` (${r.crawl.error})` : ""}, Google profile via ${r.gbp?.source || "n/a"}${r.gbp?.ok === false ? " (failed)" : ""}` +
@@ -4822,3 +4900,188 @@ async function loadActivity() {
     }
 }
 if (typeof window !== 'undefined') { window.loadActivity = loadActivity; window.__nexusActivity = { renderActivityHtml }; }
+
+/* ══════════════════════════════════════════════════════════════
+   LEAD GEN — scrape Google Business (email + phone) → email outreach
+   Backend: /leads on the relay (agent/lead_gen.py, agent/email_outreach.py).
+══════════════════════════════════════════════════════════════ */
+PAGE_TITLES.leads = 'Lead Gen';
+const LeadUI = { campaigns: [], current: '', data: null };
+
+function leadSet(id, txt) { const el = document.getElementById(id); if (el) el.textContent = txt; }
+
+async function initLeadsPage() {
+    const q = document.getElementById('leadQuery');
+    if (q && !q.value) {
+        const niche = (State.settings?.niche || '').trim();
+        if (niche) q.value = niche;
+    }
+    loadLeadSuppression();
+    await leadLoadCampaigns();
+}
+
+async function leadLoadCampaigns() {
+    try {
+        const data = await relayCall('/leads', { method: 'GET', ms: 12000 });
+        LeadUI.campaigns = data.campaigns || [];
+        leadSet('leadPlacesChip', data.places_key ? 'Places API ✓' : 'Browser scrape');
+        const sel = document.getElementById('leadCampaignSelect');
+        if (sel) {
+            const keep = sel.value;
+            sel.innerHTML = '<option value="">No campaign</option>' + LeadUI.campaigns.map(c =>
+                `<option value="${escHtml(c.id)}">${escHtml(c.name || c.id)} — ${c.total} lead${c.total === 1 ? '' : 's'}${c.with_email ? `, ${c.with_email} email` : ''}</option>`).join('');
+            if (keep && LeadUI.campaigns.some(c => c.id === keep)) sel.value = keep;
+            else if (LeadUI.campaigns.length) sel.value = LeadUI.campaigns[0].id;
+        }
+        leadSet('leadStats', `${LeadUI.campaigns.length} campaign${LeadUI.campaigns.length === 1 ? '' : 's'}`);
+        const email = data.email || {};
+        leadSet('leadEmailStatus', email.configured ? `SMTP ready (${email.from || email.host})` : 'SMTP not configured');
+        renderLeadSuppression(data.suppression || []);
+        if (sel && sel.value) await leadLoadOne(sel.value);
+        else renderLeadTable([]);
+    } catch (e) {
+        leadSet('leadProgress', `Relay unavailable (${e.message}). Start the relay to use lead gen.`);
+    }
+}
+
+async function leadLoadOne(cid) {
+    LeadUI.current = cid || '';
+    if (!cid) { renderLeadTable([]); leadSet('leadStats', '—'); return; }
+    try {
+        const data = await relayCall(`/leads?campaign=${encodeURIComponent(cid)}`, { method: 'GET', ms: 12000 });
+        LeadUI.data = data;
+        renderLeadTable(data.leads || []);
+        const s = data.stats || {};
+        leadSet('leadStats', `${s.total || 0} leads · ${s.with_email || 0} email · ${s.with_phone || 0} phone · ${s.contacted || 0} contacted`);
+    } catch (e) { leadSet('leadProgress', `Could not load campaign: ${e.message}`); }
+}
+
+function renderLeadTable(leads) {
+    const body = document.getElementById('leadTableBody');
+    if (!body) return;
+    if (!leads.length) { body.innerHTML = '<tr><td colspan="6"><div class="helper-text">No leads yet — run a scan above.</div></td></tr>'; return; }
+    body.innerHTML = leads.map(l => {
+        const site = l.website ? `<a href="${escHtml(l.website)}" target="_blank" rel="noopener">${escHtml(String(l.website).replace(/^https?:\/\/(www\.)?/, '').slice(0, 40))}</a>` : '—';
+        return '<tr>' +
+            `<td>${escHtml(l.name || '')}${l.address ? `<div class="helper-text">${escHtml(String(l.address).slice(0, 60))}</div>` : ''}</td>` +
+            `<td>${l.email ? escHtml(l.email) : '—'}</td>` +
+            `<td>${l.phone ? escHtml(l.phone) : '—'}</td>` +
+            `<td>${site}</td>` +
+            `<td>${escHtml(l.category || '—')}</td>` +
+            `<td>${escHtml(l.status || 'new')}</td>` +
+        '</tr>';
+    }).join('');
+}
+
+async function leadScan() {
+    const query = document.getElementById('leadQuery')?.value.trim() || '';
+    if (!query) { showToast('Enter what to find (e.g. "dental clinics")', 'error'); return; }
+    const body = {
+        action: 'scan', query,
+        location: document.getElementById('leadLocation')?.value.trim() || '',
+        campaign: document.getElementById('leadCampaign')?.value.trim() || '',
+        limit: parseInt(document.getElementById('leadLimit')?.value || '20', 10) || 20,
+        enrich: !!document.getElementById('leadEnrich')?.checked,
+    };
+    const btn = document.getElementById('leadScanBtn');
+    if (btn) btn.disabled = true;
+    leadSet('leadProgress', `Searching Google for "${query}"… this can take a minute.`);
+    try {
+        const out = await relayCall('/leads', { body, ms: 300000 });
+        leadSet('leadProgress', `Found ${out.found || 0} businesses via ${out.source || '?'} · ${out.with_email || 0} with email · ${out.with_phone || 0} with phone${out.error ? ` · ${out.error}` : ''}.`);
+        AgentLog.success('leads', `Lead scan "${query}" → ${out.found || 0} found`);
+        if (out.campaign) { const sel = document.getElementById('leadCampaignSelect'); if (sel) sel.value = out.campaign; }
+        await leadLoadCampaigns();
+    } catch (e) {
+        leadSet('leadProgress', `Scan failed: ${e.message}`);
+        AgentLog.error('leads', `Lead scan failed: ${e.message}`);
+    } finally { if (btn) btn.disabled = false; }
+}
+
+async function leadSend(send) {
+    if (!LeadUI.current) { showToast('Pick a campaign first', 'error'); return; }
+    if (send && !confirm(`Send outreach emails for "${LeadUI.current}" now? This will email real people.`)) return;
+    const body = {
+        action: send ? 'send' : 'preview', send: !!send, campaign: LeadUI.current,
+        subject: document.getElementById('leadSubject')?.value.trim() || '',
+        body: document.getElementById('leadBody')?.value || '',
+        limit: parseInt(document.getElementById('leadSendLimit')?.value || '0', 10) || 0,
+        only_email: !!document.getElementById('leadOnlyEmail')?.checked,
+    };
+    const btn = send ? document.getElementById('leadSendBtn') : document.getElementById('leadPreviewBtn');
+    if (btn) btn.disabled = true;
+    leadSet('leadSendProgress', send ? 'Sending…' : 'Rendering preview…');
+    try {
+        const out = await relayCall('/leads', { body, ms: send ? 600000 : 60000 });
+        const parts = [];
+        if (out.dry_run) parts.push(`Preview only (dry run) — ${out.skipped || 0} would be contacted`);
+        else parts.push(`Sent ${out.sent_count || 0}, failed ${out.failed || 0}, skipped ${out.skipped || 0}`);
+        if (out.reason) parts.push(out.reason);
+        if (out.daily_remaining != null) parts.push(`${out.daily_remaining} left in today's cap`);
+        leadSet('leadSendProgress', parts.join(' · '));
+        const box = document.getElementById('leadSendProgress');
+        if (box && out.previews?.length) {
+            const p = out.previews[0];
+            box.textContent = parts.join(' · ') + `\n\nSample → ${p.to}\nSubject: ${p.subject}\n\n${p.body}`;
+            box.style.whiteSpace = 'pre-line';
+        }
+        showToast(send ? 'Outreach run finished' : 'Preview ready', send ? 'success' : 'info');
+        if (send) { AgentLog.success('leads', `Outreach sent for ${LeadUI.current}`); await leadLoadOne(LeadUI.current); }
+    } catch (e) {
+        leadSet('leadSendProgress', `Failed: ${e.message}`);
+        AgentLog.error('leads', `Outreach failed: ${e.message}`);
+    } finally { if (btn) btn.disabled = false; }
+}
+
+async function leadExport(fmt) {
+    if (!LeadUI.current) { showToast('Pick a campaign first', 'error'); return; }
+    try {
+        const out = await relayCall('/leads', { body: { action: 'export', campaign: LeadUI.current, format: fmt, only_email: false }, ms: 30000 });
+        const blob = new Blob([out.content || ''], { type: out.mime || 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = out.filename || `leads.${fmt}`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1500);
+    } catch (e) { showToast(`Export failed: ${e.message}`, 'error'); }
+}
+
+async function leadDelete() {
+    if (!LeadUI.current) { showToast('Pick a campaign first', 'error'); return; }
+    if (!confirm(`Delete campaign "${LeadUI.current}" and its leads?`)) return;
+    try {
+        await relayCall('/leads', { body: { action: 'delete', campaign: LeadUI.current }, ms: 15000 });
+        showToast('Campaign deleted', 'info');
+        LeadUI.current = '';
+        await leadLoadCampaigns();
+    } catch (e) { showToast(`Could not delete: ${e.message}`, 'error'); }
+}
+
+async function leadSuppress() {
+    const email = document.getElementById('leadSuppressEmail')?.value.trim() || '';
+    if (!email) { showToast('Enter an email to suppress', 'error'); return; }
+    try {
+        const out = await relayCall('/leads', { body: { action: 'suppress', email }, ms: 15000 });
+        showToast(out.ok ? `${out.email} suppressed` : 'Could not suppress', out.ok ? 'success' : 'error');
+        const inp = document.getElementById('leadSuppressEmail'); if (inp) inp.value = '';
+        loadLeadSuppression();
+    } catch (e) { showToast(`Could not suppress: ${e.message}`, 'error'); }
+}
+
+async function loadLeadSuppression() {
+    try {
+        const data = await relayCall('/leads', { method: 'GET', ms: 12000 });
+        renderLeadSuppression(data.suppression || []);
+        leadSet('leadEmailStatus', data.email?.configured ? `SMTP ready (${data.email.from || data.email.host})` : 'SMTP not configured');
+    } catch { /* relay down — leave the field empty */ }
+}
+
+function renderLeadSuppression(list) {
+    const el = document.getElementById('leadSuppressionList');
+    if (!el) return;
+    el.textContent = list.length ? `Suppressed (${list.length}): ${list.slice(0, 40).join(', ')}${list.length > 40 ? '…' : ''}` : 'No suppressed addresses yet.';
+}
+
+if (typeof window !== 'undefined') {
+    Object.assign(window, { initLeadsPage, leadScan, leadLoadCampaigns, leadLoadOne, leadExport, leadDelete, leadSend, leadSuppress });
+}

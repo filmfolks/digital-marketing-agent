@@ -104,6 +104,9 @@
                 <li class="nav-item" data-page="analytics">
                     <a href="#" class="nav-link"><i class="ph ph-chart-line-up"></i><span>Analytics</span></a>
                 </li>
+                <li class="nav-item" data-page="leads">
+                    <a href="#" class="nav-link"><i class="ph ph-magnet"></i><span>Lead Gen</span><div class="nav-badge" style="background:linear-gradient(135deg,#7c3aed,#db2777)">NEW</div></a>
+                </li>
                 <li class="nav-item" data-page="browser">
                     <a href="#" class="nav-link"><i class="ph-fill ph-browser"></i><span>Browser Agent</span><div class="nav-badge" style="background:linear-gradient(135deg,#0ea5e9,#2563eb)">CDP</div></a>
                 </li>
@@ -711,7 +714,7 @@
                         </div>
                         <p class="helper-text">Paste an export from Instagram/Facebook Insights, X analytics, LinkedIn, GA4 or an ads manager. Nexus computes engagement rate, CTR, CPC, CPM, CPA and ROAS — and leaves any metric blank rather than guessing. <button class="link-btn" type="button" onclick="downloadAnalyticsTemplate()">Download the CSV template</button> · <button class="link-btn" type="button" onclick="loadSampleAnalytics()">Load a sample</button></p>
                         <div class="form-row">
-                            <div class="form-field" style="flex:2">
+                            <div class="form-field form-field-wide">
                                 <label>Paste CSV / TSV</label>
                                 <textarea id="analyticsCsv" rows="6" placeholder="date,platform,campaign,impressions,reach,likes,comments,shares,saves,clicks,conversions,spend,revenue&#10;2026-01-05,instagram,launch,48200,31500,1420,180,95,240,610,42,120,980"></textarea>
                             </div>
@@ -751,7 +754,7 @@
                             <div class="form-field"><label>Website</label><input type="url" id="brandFormWebsite" placeholder="https://acmedental.in"></div>
                         </div>
                         <div class="form-row">
-                            <div class="form-field" style="flex:2"><label>Google Business Profile URL</label><input type="url" id="brandFormGbp" placeholder="https://maps.app.goo.gl/… or https://www.google.com/maps/place/…"></div>
+                            <div class="form-field form-field-wide"><label>Google Business Profile URL</label><input type="url" id="brandFormGbp" placeholder="https://maps.app.goo.gl/… or https://www.google.com/maps/place/…"></div>
                         </div>
                         <div class="form-row">
                             <div class="form-field"><label>Social handles (optional)</label><input type="text" id="brandFormHandles" placeholder="instagram=@acme, x=@acme, linkedin=company/acme"></div>
@@ -760,6 +763,26 @@
                             <div class="form-field"><label>Location</label><input type="text" id="brandFormLocation" placeholder="Pune, India"></div>
                             <div class="form-field"><label>Target market</label><input type="text" id="brandFormMarket" placeholder="Families and young professionals in Pune"></div>
                         </div>
+                        <div class="form-row">
+                            <div class="form-field"><label>Mobile / phone</label><input type="tel" id="brandFormMobile" placeholder="+91 98765 43210"></div>
+                            <div class="form-field"><label>WhatsApp (optional)</label><input type="tel" id="brandFormWhatsapp" placeholder="+91 98765 43210"></div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-field"><label>Contact email</label><input type="email" id="brandFormEmail" placeholder="hello@acmedental.in"></div>
+                            <div class="form-field form-field-wide"><label>Social links (URLs, optional)</label><input type="text" id="brandFormSocial" placeholder="instagram=https://instagram.com/acme, facebook=https://facebook.com/acme, linkedin=https://linkedin.com/company/acme"></div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-field"><label>Brand logo</label><input type="file" id="brandFormLogo" accept="image/png,image/jpeg,image/webp,image/gif" onchange="brandUploadLogo(this)"></div>
+                            <div class="form-field form-field-end">
+                                <img id="brandLogoPreview" alt="Logo preview" style="max-height:56px;max-width:180px;display:none;border-radius:6px;background:#fff;padding:2px">
+                                <button class="btn btn-ghost" id="brandLogoRemoveBtn" onclick="brandRemoveLogo()"><i class="ph ph-trash"></i> Remove logo</button>
+                            </div>
+                        </div>
+                        <label class="tone-pill" style="display:inline-flex;gap:8px;align-items:center;margin:4px 0">
+                            <input type="checkbox" id="brandFormSignature" checked>
+                            <span>Add signature (name, phone, website, social links) to every post</span>
+                        </label>
+                        <div class="helper-text" id="brandSignaturePreview"></div>
                         <div class="form-row brand-actions">
                             <button class="btn btn-primary" id="brandSaveBtn" onclick="brandCreate()"><i class="ph ph-plus"></i> Save brand</button>
                             <button class="btn btn-ghost" id="brandResearchBtn" onclick="brandRun('research')"><i class="ph ph-magnifying-glass"></i> Research</button>
@@ -815,6 +838,82 @@
                         <div class="form-row brand-actions">
                             <button class="btn btn-primary" id="brandPlanSaveBtn" onclick="brandSavePlanTable()"><i class="ph ph-floppy-disk"></i> Save plan edits</button>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ PAGE: LEAD GEN ═══ -->
+            <div class="page-content" id="page-leads">
+                <div class="fade-up">
+                    <div class="glass-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-magnet"></i> Lead Gen — Google Business scraper</h3>
+                            <span class="chip" id="leadPlacesChip">—</span>
+                        </div>
+                        <p class="helper-text">Search Google for businesses (e.g. "dental clinics in Pune"), collect their <b>email &amp; phone</b> from their own websites, then email them about your services. Add <code>GOOGLE_PLACES_API_KEY</code> to <code>.env</code> for the fast, reliable Places API; without it Nexus reads the public Maps page in the browser (best-effort).</p>
+                        <div class="form-row">
+                            <div class="form-field"><label>What to find *</label><input type="text" id="leadQuery" placeholder="dental clinics"></div>
+                            <div class="form-field"><label>City / area</label><input type="text" id="leadLocation" placeholder="Pune"></div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-field"><label>Campaign name (optional)</label><input type="text" id="leadCampaign" placeholder="pune-dentists"></div>
+                            <div class="form-field"><label>Max results</label><input type="number" id="leadLimit" value="20" min="1" max="200"></div>
+                            <div class="form-field form-field-check">
+                                <label class="tone-pill" style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" id="leadEnrich" checked><span>Find emails on their sites</span></label>
+                            </div>
+                        </div>
+                        <div class="form-row brand-actions">
+                            <button class="btn btn-primary" id="leadScanBtn" onclick="leadScan()"><i class="ph ph-magnifying-glass"></i> Scan businesses</button>
+                            <button class="btn btn-ghost" id="leadRefreshBtn" onclick="leadLoadCampaigns()"><i class="ph ph-arrows-clockwise"></i> Refresh</button>
+                        </div>
+                        <div class="helper-text" id="leadProgress"></div>
+                    </div>
+
+                    <div class="glass-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-users-three"></i> Campaigns &amp; leads</h3>
+                            <span class="chip" id="leadStats">—</span>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-field form-field-wide"><label>Campaign</label><select id="leadCampaignSelect" onchange="leadLoadOne(this.value)"><option value="">No campaign</option></select></div>
+                            <div class="form-field form-field-btnrow">
+                                <button class="btn btn-ghost" id="leadExportCsvBtn" onclick="leadExport('csv')"><i class="ph ph-file-csv"></i> CSV</button>
+                                <button class="btn btn-ghost" id="leadExportJsonBtn" onclick="leadExport('json')"><i class="ph ph-brackets-curly"></i> JSON</button>
+                                <button class="btn btn-ghost" id="leadDeleteBtn" onclick="leadDelete()"><i class="ph ph-trash"></i> Delete</button>
+                            </div>
+                        </div>
+                        <div class="brand-table-wrap">
+                            <table class="brand-plan-table">
+                                <thead><tr><th>Business</th><th>Email</th><th>Phone</th><th>Website</th><th>Category</th><th>Status</th></tr></thead>
+                                <tbody id="leadTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="glass-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-envelope-simple"></i> Email outreach</h3>
+                            <span class="chip" id="leadEmailStatus">—</span>
+                        </div>
+                        <p class="helper-text">Uses your own SMTP server (<code>NEXUS_SMTP_HOST</code>, <code>NEXUS_SMTP_USER</code>, <code>NEXUS_SMTP_PASS</code>, <code>NEXUS_EMAIL_FROM</code>). Recipients that reply STOP are suppressed automatically. Placeholders: <code>{business_name}</code>, <code>{city}</code>, <code>{category}</code>, <code>{services}</code>, <code>{sender_name}</code>, <code>{website}</code>, <code>{offer}</code>.</p>
+                        <div class="form-field"><label>Subject</label><input type="text" id="leadSubject" placeholder="Helping {business_name} get more customers in {city}"></div>
+                        <div class="form-field"><label>Message</label><textarea id="leadBody" rows="8" placeholder="Leave blank to use the built-in template that pitches your brand's services."></textarea></div>
+                        <div class="form-row">
+                            <div class="form-field"><label>This run (0 = daily cap)</label><input type="number" id="leadSendLimit" value="0" min="0"></div>
+                            <div class="form-field form-field-check">
+                                <label class="tone-pill" style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" id="leadOnlyEmail" checked><span>Only leads with an email</span></label>
+                            </div>
+                        </div>
+                        <div class="form-row brand-actions">
+                            <button class="btn btn-ghost" id="leadPreviewBtn" onclick="leadSend(false)"><i class="ph ph-eye"></i> Preview</button>
+                            <button class="btn btn-primary" id="leadSendBtn" onclick="leadSend(true)"><i class="ph ph-paper-plane-tilt"></i> Send emails</button>
+                        </div>
+                        <div class="helper-text" id="leadSendProgress"></div>
+                        <div class="form-row">
+                            <div class="form-field form-field-wide"><label>Suppress an email (opt-out)</label><input type="email" id="leadSuppressEmail" placeholder="someone@example.com"></div>
+                            <div class="form-field form-field-btnrow"><button class="btn btn-ghost" id="leadSuppressBtn" onclick="leadSuppress()"><i class="ph ph-prohibit"></i> Suppress</button></div>
+                        </div>
+                        <div class="helper-text" id="leadSuppressionList"></div>
                     </div>
                 </div>
             </div>
@@ -924,7 +1023,7 @@
                                         <label>Custom Cloud Model (Optional)</label>
                                         <input type="text" id="cloudModelInput" placeholder="e.g. gemini-2.0-flash, llama-3.3-70b-versatile">
                                     </div>
-                                    <div class="form-field" style="display:flex; align-items:flex-end;">
+                                    <div class="form-field form-field-end">
                                         <button type="button" class="btn btn-ghost" id="testCloudAIBtn" style="width:100%"><i class="ph ph-plug"></i> Test Cloud AI</button>
                                     </div>
                                 </div>
@@ -948,7 +1047,7 @@
                                         <label>API Base URL</label>
                                         <input type="text" id="localModelUrl" value="http://localhost:1234/v1" placeholder="http://localhost:1234/v1 or http://localhost:11434/v1">
                                     </div>
-                                    <div class="form-field" style="display:flex; align-items:flex-end;">
+                                    <div class="form-field form-field-end">
                                         <button type="button" class="btn btn-ghost" id="testLocalAIBtn" style="width:100%"><i class="ph ph-plug"></i> Test Local Server</button>
                                     </div>
                                 </div>
@@ -1020,7 +1119,7 @@
                                     <label>Relay token (required when the relay runs in LAN/phone mode)</label>
                                     <input type="password" id="relayToken" placeholder="paste the token printed by the relay">
                                 </div>
-                                <div class="form-field" style="display:flex; align-items:flex-end;">
+                                <div class="form-field form-field-end">
                                     <button type="button" class="btn btn-ghost" style="width:100%" onclick="saveRelayToken()"><i class="ph ph-key"></i> Save &amp; test relay</button>
                                 </div>
                             </div>
@@ -1234,7 +1333,7 @@ python3 agent/nexus_relay.py   # start local relay (keep this terminal open)</co
                 </div>
 
                 <!-- ── DevTools Command Console ── -->
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
+                <div class="grid-2">
                     <div class="glass-card fade-up" style="padding:20px;">
                         <div class="card-header"><h3><i class="ph ph-compass"></i> Raw DevTools Console</h3></div>
                         <p class="helper-text" style="margin-bottom:10px;">Low-level CDP/Playwright commands for debugging and inspection.</p>
@@ -1266,7 +1365,7 @@ python3 agent/nexus_relay.py   # start local relay (keep this terminal open)</co
                     </div>
                     <div class="glass-card fade-up" style="padding:20px;">
                         <div class="card-header"><h3><i class="ph ph-terminal-window"></i> Agent Output</h3>
-                            <span style="flex:1"></span>
+                            <span class="spacer"></span>
                             <button class="btn btn-ghost btn-sm" onclick="clearBrowserOut()"><i class="ph ph-trash"></i></button>
                             <button class="btn btn-ghost btn-sm" onclick="copyBrowserOut()"><i class="ph ph-copy"></i></button>
                         </div>
@@ -1309,7 +1408,7 @@ and an audit entry to logs/browser_audit.jsonl.</pre>
                     <pre id="mcpToolsOut" class="hidden" style="margin-top:12px;background:rgba(0,0,0,.3);padding:12px;border-radius:10px;font-size:.78rem;white-space:pre-wrap;"></pre>
                 </div>
 
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
+                <div class="grid-2">
                     <div class="glass-card fade-up" style="padding:20px;">
                         <div class="card-header"><h3><i class="ph-fill ph-telegram-logo" style="color:#229ED9"></i> Telegram Bot Control</h3></div>
                         <p class="helper-text">Run the whole manager from your phone: <code>/generate</code>, <code>/plan</code>, <code>/browse</code>, <code>/shot</code>, <code>/post</code>, <code>/logs</code>. Dangerous commands require an inline <b>✅ Approve</b> tap within 5 minutes. Script: <code>agent/telegram_bot.py</code>.</p>
@@ -1354,7 +1453,7 @@ var res = $.http.get("http://localhost:8957/brief"); // supergateway bridge</cod
                     <div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
                         <h3><i class="ph ph-warning-octagon"></i> Agent Error &amp; Activity Report</h3>
                         <span id="logStats" style="font-size:.8rem;opacity:.7;"></span>
-                        <span style="flex:1"></span>
+                        <span class="spacer"></span>
                         <button class="btn btn-ghost btn-sm" onclick="AgentLog.exportJson()"><i class="ph ph-download-simple"></i> Export JSON</button>
                         <button class="btn btn-ghost btn-sm" onclick="clearAgentLogs()"><i class="ph ph-trash"></i> Clear</button>
                     </div>
@@ -1376,7 +1475,7 @@ var res = $.http.get("http://localhost:8957/brief"); // supergateway bridge</cod
                     <div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
                         <h3><i class="ph ph-clock-counter-clockwise"></i> Agent Activity Log</h3>
                         <span id="activityStats" style="font-size:.8rem;opacity:.7;"></span>
-                        <span style="flex:1"></span>
+                        <span class="spacer"></span>
                         <select id="activityPlatform" onchange="loadActivity()">
                             <option value="">All platforms</option><option value="x">X</option>
                             <option value="instagram">Instagram</option><option value="facebook">Facebook</option>
@@ -1421,7 +1520,7 @@ var res = $.http.get("http://localhost:8957/brief"); // supergateway bridge</cod
                 <div class="glass-card hashtag-tool-card fade-up">
                     <div class="card-header"><h3><i class="ph ph-hash"></i> Hashtag Research Tool</h3></div>
                     <div class="form-row">
-                        <div class="form-field" style="flex:2">
+                        <div class="form-field form-field-wide">
                             <label>Niche / Topic</label>
                             <input type="text" id="htTopic" placeholder="e.g., sustainable fashion, crypto, fitness coaching">
                         </div>
@@ -1528,7 +1627,7 @@ var res = $.http.get("http://localhost:8957/brief"); // supergateway bridge</cod
                                     <option value="googleads">Google Ads</option>
                                 </select>
                             </div>
-                            <div class="form-field" style="flex:2">
+                            <div class="form-field form-field-wide">
                                 <label>Destination URL *</label>
                                 <input type="url" id="utmBase" placeholder="https://yourbrand.com/landing-page" oninput="buildUtm()">
                             </div>
