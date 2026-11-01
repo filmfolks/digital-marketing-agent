@@ -280,7 +280,7 @@ class RelayServerCase(unittest.TestCase):
         self.request("POST", "/publish", token=TOKEN, body={
             "content": "hi", "platforms": ["facebook"], "dry_run": True,
         })
-        self.assertFalse((Path(self._tmp.name) / "publish_job.json").exists(),
+        self.assertEqual(list(Path(self._tmp.name).glob("publish_job*.json")), [],
                          "the in-flight hand-off file must not be left behind")
 
     # ── MCP passthrough ─────────────────────────────────────────────────────

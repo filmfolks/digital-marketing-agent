@@ -127,14 +127,15 @@ class Scheduler:
         return [t for t in self.store.list(status="approved")
                 if t.get("scheduled_at") and nt.parse_when(t["scheduled_at"]) <= now]
 
-    def tick(self) -> dict:
+    def tick(self, dry_run: Optional[bool] = None) -> dict:
         now = self.clock()
         self.last_tick = nt.iso(now)
+        is_dry = self.dry_run if dry_run is None else bool(dry_run)
         ran, missed, failed = [], [], []
         for t in self.due():
             when = nt.parse_when(t["scheduled_at"])
             if now - when > self.grace:
-                if self.dry_run:
+                if is_dry:
                     missed.append(t["id"])
                     continue
                 try:
@@ -145,7 +146,7 @@ class Scheduler:
                 except nt.TaskError:
                     pass
                 continue
-            if self.dry_run:
+            if is_dry:
                 # Preview only: validate through publish.py --dry-run, change nothing.
                 if t["id"] not in self._previewed:
                     self._previewed.add(t["id"])
@@ -172,7 +173,7 @@ class Scheduler:
                 self.store.transition(t["id"], "failed", by="scheduler", expect="running", result=res,
                                       error=str(res.get("error") or res.get("status") or "publish failed")[:500])
                 failed.append(t["id"])
-        return {"at": self.last_tick, "ran": ran, "failed": failed, "missed": missed, "dry_run": self.dry_run}
+        return {"at": self.last_tick, "ran": ran, "failed": failed, "missed": missed, "dry_run": is_dry}
 
     def ensure_media(self, task: dict) -> dict:
         """Right before posting: a platform that needs an image (Instagram) must have one.

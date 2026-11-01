@@ -341,9 +341,13 @@
                     if (ev === 'meta' && st) st.textContent = `Brain: ${data.model || data.brain}${data.mode ? ` · ${data.mode}` : ''}`;
                     else if (ev === 'tool_call' && st) st.textContent = `Running ${data.name}…`;
                     else if (ev === 'task') { created.push(data.task); cards.insertAdjacentHTML('beforeend', taskCardHtml(data.task)); out.appendChild(cards); }
-                    else if (ev === 'warning') out.insertAdjacentHTML('beforeend', `<div class="nt-warn">${esc(data.text)}</div>`);
-                    else if (ev === 'text') { answer = data.text || ''; out.insertAdjacentHTML('afterbegin', `<div class="nt-answer">${window.renderMarkdown ? window.renderMarkdown(answer) : esc(answer)}</div>`); }
-                    else if (ev === 'error') out.insertAdjacentHTML('beforeend', `<div class="nt-error">${esc(data.error || data)}</div>`);
+                    else if (ev === 'text') {
+                        answer = data.text || '';
+                        const ansEl = out.querySelector('.nt-answer');
+                        const html = window.renderMarkdown ? window.renderMarkdown(answer) : esc(answer);
+                        if (ansEl) ansEl.innerHTML = html;
+                        else out.insertAdjacentHTML('afterbegin', `<div class="nt-answer">${html}</div>`);
+                    }
                 },
             });
             if (created.length > 1) {

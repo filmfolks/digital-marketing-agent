@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Callable
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "agent"))
 BRANDS_DIR = Path(os.environ.get("NEXUS_BRANDS_DIR") or (ROOT / "data" / "brands"))
 USER_AGENT = os.environ.get("NEXUS_CRAWLER_UA",
                             "NexusBrandResearch/1.0 (+brand audit requested by the site owner)")
@@ -57,29 +58,7 @@ def now_iso() -> str:
 def slugify(text: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
     return s[:60] or "brand"
-
-
-def env_value(raw: str) -> str:
-    """Value part of a .env line: quotes removed, unquoted inline "  # comment" dropped
-    (.env.example has lines like `NEXUS_API_RETRIES=2   # extra attempts`)."""
-    v = raw.strip()
-    if v[:1] in ("'", '"'):
-        end = v.find(v[0], 1)
-        return v[1:end] if end > 0 else v[1:]
-    return re.split(r"\s+#", v, maxsplit=1)[0].strip()
-
-
-def load_env() -> None:
-    p = ROOT / ".env"
-    if not p.is_file():
-        return
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            k, v = k.strip(), env_value(v)
-            if k and v and not os.environ.get(k):
-                os.environ[k] = v
+from env_utils import env_value, load_env  # noqa: E402
 
 
 def normalize_url(url: str) -> str:

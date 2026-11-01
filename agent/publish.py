@@ -35,31 +35,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "agent"))
+
+from env_utils import env_value, load_env  # noqa: E402
+
 QUEUE_FILE = ROOT / "logs" / "publish_queue.json"
 AUDIT = ROOT / "logs" / "publish_audit.jsonl"
 SOCIAL_AGENT = ROOT / "agent" / "social_browser_agent.py"
-
-
-def env_value(raw: str) -> str:
-    """Value part of a .env line: quotes removed, unquoted inline "  # comment" dropped
-    (.env.example has lines like `NEXUS_API_RETRIES=2   # extra attempts`)."""
-    v = raw.strip()
-    if v[:1] in ("'", '"'):
-        end = v.find(v[0], 1)
-        return v[1:end] if end > 0 else v[1:]
-    return re.split(r"\s+#", v, maxsplit=1)[0].strip()
-
-
-def load_env() -> None:
-    for p in (ROOT / ".env", Path.cwd() / ".env"):
-        if not p.is_file():
-            continue
-        for line in p.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), env_value(v))
-
 
 load_env()
 
@@ -160,8 +142,11 @@ def post_twitter(text: str, c: dict, media: str = "") -> dict:
     )
     tid = (body.get("data") or {}).get("id")
     err = body.get("errors") or body.get("detail") or body.get("error")
+    if isinstance(err, list) and err:
+        err = "; ".join(str(e.get("message", e) if isinstance(e, dict) else e) for e in err)
     if not tid and status in (401, 403):
-        err = (err or "unauthorized") + " — posting requires user-context OAuth (OAuth 1.0a or OAuth 2.0 with tweet.write); an app-only bearer token cannot create posts"
+        msg = f"HTTP {status}: {err}" if err else f"HTTP {status} unauthorized"
+        err = f"{msg} — X/Twitter API v2 requires OAuth 1.0a or OAuth 2.0 user context with tweet.write scope; app-only bearer tokens cannot create posts (use browser fallback or user-context token)"
     return {"ok": status in (200, 201) and bool(tid), "status": status, "id": tid, "error": err}
 
 

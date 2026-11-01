@@ -189,6 +189,18 @@ class SchedulerTests(unittest.TestCase):
         self.assertFalse(ns.publish_runner({"id": "t-3", "platforms": ["x", "facebook"], "content": "hi", "media": []},
                                            run=run)["ok"])
 
+    def test_tick_dry_run_override(self):
+        clock, s, posted, sch = setup()
+        t = approved(s, "2026-10-20T17:59")
+        res = sch.tick(dry_run=True)
+        self.assertTrue(res["dry_run"])
+        self.assertEqual(s.get(t["id"])["status"], "approved")
+        self.assertEqual(res["ran"][0]["id"], t["id"])
+        res = sch.tick(dry_run=False)
+        self.assertFalse(res["dry_run"])
+        self.assertEqual(res["ran"], [t["id"]])
+        self.assertEqual(s.get(t["id"])["status"], "done")
+
 
 if __name__ == "__main__":
     unittest.main()

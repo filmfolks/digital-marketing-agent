@@ -290,6 +290,9 @@ def send_campaign(campaign_id: str, *, subject: str = "", body: str = "", brand_
     subject = subject or DEFAULT_SUBJECT
     body_tpl = body or DEFAULT_BODY
     suppressed = lg.load_suppression()
+    would_send_count = len([l for l in leads if (l.get("email") or "").strip()
+                            and (l.get("email") or "").lower() not in suppressed
+                            and l.get("status") not in ("unsubscribed", "contacted")])
 
     cap = int(cfg.get("daily_cap") or 0)
     remaining_cap = max(0, cap - sent_last_24h()) if cap else None
@@ -344,9 +347,7 @@ def send_campaign(campaign_id: str, *, subject: str = "", body: str = "", brand_
     if update and send:
         lg.save_campaign(campaign)
     return {"ok": True, "sent": True if send else False, "dry_run": not send,
-            "would_send": len([l for l in leads if (l.get("email") or "").strip()
-                               and (l.get("email") or "").lower() not in suppressed
-                               and l.get("status") not in ("unsubscribed", "contacted")]),
+            "would_send": would_send_count,
             "sent_count": sent, "failed": failed, "skipped": skipped,
             "daily_remaining": max(0, int(cfg.get("daily_cap", 50)) - sent_last_24h()) if cfg.get("daily_cap") else None,
             "previews": previews, "campaign": campaign["id"]}

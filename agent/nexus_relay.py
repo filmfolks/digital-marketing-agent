@@ -71,6 +71,7 @@ import brand_signature  # noqa: E402
 import brain_bridge  # noqa: E402
 import antigravity_bridge  # noqa: E402
 import nexus_scheduler  # noqa: E402
+from env_utils import env_value, load_env  # noqa: E402
 from nexus_task_routes import TaskRoutesMixin  # noqa: E402
 VERSION = "3.1.0"
 UI_DIR = ROOT / "ui"
@@ -198,13 +199,14 @@ class Handler(TaskRoutesMixin, BaseHTTPRequestHandler):
             if not self._token_ok():
                 return self._error(401, "Invalid or missing X-Nexus-Token")
             import activity_log
+            import nexus_tasks as nt
             q = urllib.parse.parse_qs(self.path.partition("?")[2])
             one = lambda k: (q.get(k) or [""])[0]          # noqa: E731
             try:
                 limit = int(one("limit") or 200)
             except ValueError:
                 limit = 200
-            return self._reply(200, activity_log.query(one("platform"), one("status"), one("action"), limit))
+            return self._reply(200, {"timezone": nt.tz_name(), **activity_log.query(one("platform"), one("status"), one("action"), limit)})
         if path == "/activity/media":
             return self._activity_media()
         if path == "/links":
@@ -420,7 +422,7 @@ class Handler(TaskRoutesMixin, BaseHTTPRequestHandler):
 
         payload = json.loads(json.dumps(body, default=str))   # deep copy
         payload.pop("credentials_file", None)
-        job_file = LOGS / "publish_job.json"
+        job_file = LOGS / f"publish_job-{secrets.token_hex(4)}.json"
         job_file.parent.mkdir(parents=True, exist_ok=True)
         job_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -974,33 +976,6 @@ def brand_module():
         _BRAND_MODULE = mod
     return _BRAND_MODULE
 
-
-def env_value(raw: str) -> str:
-    """Value part of a .env line: quotes removed, unquoted inline "  # comment" dropped
-    (.env.example has lines like `NEXUS_API_RETRIES=2   # extra attempts`)."""
-    v = raw.strip()
-    if v[:1] in ("'", '"'):
-        end = v.find(v[0], 1)
-        return v[1:end] if end > 0 else v[1:]
-    return re.split(r"\s+#", v, maxsplit=1)[0].strip()
-
-
-def load_env(paths=None) -> None:
-    """Read .env so NEXUS_RELAY_TOKEN etc. work without exporting them.
-    (Previously the relay ignored .env entirely: a token set there was silently
-    not enforced.) Real environment variables win; empty values are skipped."""
-    for p in paths or (ROOT / ".env", Path.cwd() / ".env"):
-        p = Path(p)
-        if not p.is_file():
-            continue
-        for line in p.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            k, v = k.strip(), env_value(v)
-            if k and v and not os.environ.get(k):
-                os.environ[k] = v
 
 
 def health_payload(server) -> dict:

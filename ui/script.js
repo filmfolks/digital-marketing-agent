@@ -4836,8 +4836,10 @@ function activityEsc(v) {
 function activityTime(ts) {
     const d = new Date(ts);
     if (isNaN(d)) return String(ts || '');
-    try { return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) + ' IST'; }
-    catch { return d.toISOString(); }
+    try {
+        const tz = (typeof window !== 'undefined' && window.nexusTimezone) || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : null) || 'Asia/Kolkata';
+        return d.toLocaleString(undefined, { timeZone: tz, dateStyle: 'medium', timeStyle: 'short' });
+    } catch { return d.toISOString(); }
 }
 function renderActivityHtml(data, mediaUrl) {
     const items = data?.entries || [];
@@ -4890,6 +4892,7 @@ async function loadActivity() {
     if (st) qs.set('status', st);
     try {
         const data = await relayCall(`/activity?${qs}`, { method: 'GET', ms: 8000 });
+        if (data?.timezone && typeof window !== 'undefined') window.nexusTimezone = data.timezone;
         const token = relayToken();
         const mediaUrl = m => `${relayUrl()}/activity/media?path=${encodeURIComponent(m)}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
         el.innerHTML = renderActivityHtml(data, mediaUrl);

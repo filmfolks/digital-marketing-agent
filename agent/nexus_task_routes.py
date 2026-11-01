@@ -117,8 +117,14 @@ class TaskRoutesMixin:
                 self._reply(200, {"ok": True, **store.approve_many(body.get("ids") or [], campaign_id=body.get("campaign_id"),
                                                                    by="owner (ui)")})
             elif path == "/scheduler/tick":
-                sch = nexus_scheduler.Scheduler(store, dry_run=bool(body.get("dry_run", True)))
-                self._reply(200, {"ok": True, **sch.tick()})
+                dry_run = bool(body.get("dry_run", True))
+                sch = getattr(self.server, "scheduler", None)
+                if sch:
+                    res = sch.tick(dry_run=dry_run)
+                else:
+                    sch = nexus_scheduler.Scheduler(store, dry_run=dry_run)
+                    res = sch.tick()
+                self._reply(200, {"ok": True, **res})
             elif CAMP_RE.match(path):
                 self._reply(200, {"ok": True, "campaign": store.set_campaign_auto_approve(
                     CAMP_RE.match(path).group(1), bool(body.get("value")), by="user")})
@@ -131,7 +137,10 @@ class TaskRoutesMixin:
                         cur = store.get(tid).get("scheduled_at")
                         if nt.parse_when(body["scheduled_at"]) != nt.parse_when(cur):
                             store.update(tid, {"scheduled_at": body["scheduled_at"]}, by="user")
-                    t = store.approve(tid, by="owner (ui)")
+                    wait_media = body.get("wait_media")
+                    if wait_media is None and body.get("async_media"):
+                        wait_media = False
+                    t = store.approve(tid, by="owner (ui)", wait_media=wait_media)
                 elif action == "unapprove":
                     t = store.transition(tid, "pending_approval", by="owner (ui)")
                 elif action == "cancel":

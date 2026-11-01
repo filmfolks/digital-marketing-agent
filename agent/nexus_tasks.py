@@ -477,14 +477,16 @@ class TaskStore:
         status = "failed" if to == "failed" else "ok"
         return self._mutate(task_id, fn, f"task_{to}", status=status)
 
-    def approve(self, task_id: str, *, by: str = "user") -> dict:
+    def approve(self, task_id: str, *, by: str = "user", wait_media: Optional[bool] = None) -> dict:
         t = self.transition(task_id, "approved", by=by)
         if self.auto_media:
             try:
                 import nexus_media
                 if nexus_media.missing_for(t):
-                    self._auto_media(t, "approved", wait=True)
-                    t = self.get(task_id)
+                    wait = True if wait_media is None else bool(wait_media)
+                    self._auto_media(t, "approved", wait=wait)
+                    if wait:
+                        t = self.get(task_id)
             except Exception as e:                              # noqa: BLE001
                 print(f"[tasks] media at approval {task_id}: {e}", file=sys.stderr)
         return t

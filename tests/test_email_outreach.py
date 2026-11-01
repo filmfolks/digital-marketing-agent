@@ -117,6 +117,7 @@ class SendCampaignTests(_Env):
         out = eo.send_campaign("pune", send=True, cfg=CFG, sleep=lambda s: None,
                                send_fn=lambda to, s, b, c: sent.append(to) or {"ok": True})
         self.assertEqual(out["sent_count"], 1)
+        self.assertEqual(out["would_send"], 1)
         self.assertEqual(sent, ["info@acme.in"])
         self.assertEqual(eo.sent_last_24h(), 1)
         camp = lg.load_campaign("pune")
